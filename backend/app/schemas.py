@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
+
+
+class DemandForecastRequest(BaseModel):
+    hospital_id: str = Field(..., min_length=1)
+    blood_group: str = Field(..., min_length=1)
+    historical_demand: List[float] = Field(..., min_length=1)
+
+    # Optional; if omitted, backend will try to look it up from hospital metadata.
+    hospital_type: Optional[str] = None
+    # Optional; if omitted, backend will try to look it up from hospital metadata.
+    bed_capacity: Optional[float] = None
+
+    # ISO date (YYYY-MM-DD) for the LAST value in historical_demand.
+    # If omitted, defaults to today.
+    end_date: Optional[str] = None
+
+    # Currently the shipped TFT checkpoint is trained for 7-day horizon.
+    forecast_days: int = Field(7, ge=1, le=14)
+
+    # Optional future holiday flags for the forecast horizon.
+    # If provided, must have length == forecast_days.
+    # Accepts booleans or 0/1 values.
+    is_holiday: Optional[List[bool]] = None
+
+
+class ForecastPoint(BaseModel):
+    date: str
+    q10: Optional[float] = None
+    q50: float
+    q90: Optional[float] = None
+
+
+class DemandForecastResponse(BaseModel):
+    model: str
+    hospital_id: str
+    blood_group: str
+    forecast_days: int
+    forecast: List[ForecastPoint]
+
+
+class PatchGRUForecastRequest(BaseModel):
+    hospital_id: str = Field(..., min_length=1)
+    blood_group: str = Field(..., min_length=1)
+    historical_demand: List[float] = Field(..., min_length=1)
+    historical_stock: Optional[List[float]] = None
+
+    # ISO date (YYYY-MM-DD) for the LAST value in historical_demand.
+    # If omitted, defaults to today.
+    end_date: Optional[str] = None
+
+    # Optional override if you already know the numeric encodings used in training.
+    hospital_id_encoded: Optional[int] = None
+    blood_group_encoded: Optional[int] = None
+
+    # Optional holiday flags for the 28-day lookback.
+    # If provided, must have length == lookback_days (28).
+    is_holiday_lookback: Optional[List[bool]] = None
+
+
+class PatchGRUForecastResponse(BaseModel):
+    model: str
+    forecast_days: int
+    demand_forecast_14d: List[float]
+    days_until_expiry_14d: List[float]
+
