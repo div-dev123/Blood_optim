@@ -1,0 +1,58 @@
+[
+  {
+    "date": "2026-02-15",
+    "bloodType": "A+",
+    "predictedDemand": 45,
+    "currentInventory": 32,
+    "confidence": 0.87,
+    "shortage": true
+  },
+  {
+    "date": "2026-02-16",
+    "bloodType": "O+",
+    "predictedDemand": 52,
+    "currentInventory": 48,
+    "confidence": 0.92,
+    "shortage": true
+  },
+  {
+    "date": "2026-02-17",
+    "bloodType": "B+",
+    "predictedDemand": 28,
+    "currentInventory": 35,
+    "confidence": 0.78,
+    "shortage": false
+  },
+  {
+    "date": "2026-02-18",
+    "bloodType": "AB+",
+    "predictedDemand": 15,
+    "currentInventory": 18,
+    "confidence": 0.85,
+    "shortage": false
+  },
+  {
+    "date": "2026-02-19",
+    "bloodType": "O-",
+    "predictedDemand": 22,
+    "currentInventory": 15,
+    "confidence": 0.91,
+    "shortage": true
+  },
+  {
+    "date": "2026-02-20",
+    "bloodType": "A-",
+    "predictedDemand": 18,
+    "currentInventory": 20,
+    "confidence": 0.82,
+    "shortage": false
+  },
+  {
+    "date": "2026-02-21",
+    "bloodType": "B-",
+    "predictedDemand": 12,
+    "currentInventory": 14,
+    "confidence": 0.76,
+    "shortage": false
+  }
+]
