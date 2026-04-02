@@ -27,8 +27,7 @@ class HospitalMetadataService:
 
         df = pd.read_csv(self.csv_path)
         expected = {"hospital_id", "hospital_name", "hospital_type", "bed_capacity"}
-        missing = expected - set(df.columns)
-        if missing:
+        if not expected.issubset(set(df.columns)):
             return
 
         by_id: dict[str, HospitalInfo] = {}

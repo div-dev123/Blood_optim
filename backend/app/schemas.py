@@ -36,6 +36,25 @@ class AuthResponse(BaseModel):
     user: AuthUser
 
 
+class InventoryUnitCreateRequest(BaseModel):
+    hospital_id: str = Field(..., min_length=1)
+    blood_type: str = Field(..., min_length=1)
+    collection_date: str = Field(..., min_length=10, max_length=10)  # YYYY-MM-DD
+    expiry_date: str = Field(..., min_length=10, max_length=10)  # YYYY-MM-DD
+    location: str = Field("Main Storage", min_length=1)
+
+
+class InventoryUnit(BaseModel):
+    id: str
+    hospital_id: str
+    bloodType: str
+    collectionDate: str
+    expiryDate: str
+    status: str
+    location: str
+    matchScore: int
+
+
 class DemandForecastRequest(BaseModel):
     hospital_id: str = Field(..., min_length=1)
     blood_group: str = Field(..., min_length=1)

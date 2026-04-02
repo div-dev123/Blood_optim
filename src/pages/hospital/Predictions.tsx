@@ -166,6 +166,32 @@ export default function Predictions() {
   const [patchgruLoading, setPatchgruLoading] = useState(false)
   const [patchgruError, setPatchgruError] = useState<string | null>(null)
 
+  const defaultCustomBloodType: BloodType = selectedBloodType === 'all' ? 'O+' : selectedBloodType
+  const [customBloodType, setCustomBloodType] = useState<BloodType>(defaultCustomBloodType)
+  const [customForecastDays, setCustomForecastDays] = useState(7)
+  const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [customHistoryText, setCustomHistoryText] = useState(() => {
+    const seed = hashString(`${hospitalId}:${defaultCustomBloodType}:custom-seed`)
+    const baseline = DEMAND_BASELINE[defaultCustomBloodType]
+    return buildSyntheticHistory(30, baseline, seed).join(', ')
+  })
+  const [customResult, setCustomResult] = useState<DemandForecastResponse | null>(null)
+  const [customLoading, setCustomLoading] = useState(false)
+  const [customError, setCustomError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (selectedBloodType === 'all') return
+    setCustomBloodType(selectedBloodType)
+  }, [selectedBloodType])
+
+  useEffect(() => {
+    const seed = hashString(`${hospitalId}:${customBloodType}:custom-seed`)
+    const baseline = DEMAND_BASELINE[customBloodType]
+    setCustomHistoryText(buildSyntheticHistory(30, baseline, seed).join(', '))
+    setCustomResult(null)
+    setCustomError(null)
+  }, [customBloodType, hospitalId])
+
   useEffect(() => {
     const controller = new AbortController()
 
@@ -348,6 +374,16 @@ export default function Predictions() {
     })
   }, [patchgruForecast])
 
+  const customChartData = useMemo(() => {
+    if (!customResult) return []
+    return customResult.forecast.map((p) => ({
+      date: formatDate(p.date).split(',')[0],
+      q10: p.q10 ?? p.q50,
+      q50: p.q50,
+      q90: p.q90 ?? p.q50,
+    }))
+  }, [customResult])
+
   return (
     <div className="min-h-screen bg-clinical-white">
       <Navbar />
@@ -450,6 +486,145 @@ export default function Predictions() {
                   {type}
                 </button>
               ))}
+            </div>
+          </Card>
+
+          {/* Interactive Demand Forecast */}
+          <Card className="mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-heading text-xl font-semibold text-medical-navy">
+                  Interactive Demand Forecast
+                </h3>
+                <p className="text-sm text-gray-600">
+                  Enter historical demand values and run a live TFT forecast.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Blood Type</label>
+                  <select
+                    value={customBloodType}
+                    onChange={(e) => setCustomBloodType(e.target.value as BloodType)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  >
+                    {BLOOD_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Forecast Days</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={14}
+                      value={customForecastDays}
+                      onChange={(e) => setCustomForecastDays(clamp(Number(e.target.value || 0), 1, 14))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
+                    <input
+                      type="date"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Historical Demand (comma/newline separated)
+                  </label>
+                  <textarea
+                    value={customHistoryText}
+                    onChange={(e) => setCustomHistoryText(e.target.value)}
+                    rows={7}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none font-mono text-sm"
+                    placeholder="e.g. 12, 14, 11, 13"
+                  />
+                  <p className="mt-2 text-xs text-gray-500">
+                    Tip: 30 values works well; minimum 1.
+                  </p>
+                </div>
+
+                {customError ? <p className="text-sm text-vital-crimson">{customError}</p> : null}
+
+                <button
+                  className="w-full px-4 py-2 rounded-lg bg-vital-crimson text-white font-semibold hover:opacity-90 disabled:opacity-60"
+                  disabled={customLoading}
+                  onClick={async () => {
+                    const values = customHistoryText
+                      .split(/[\s,]+/)
+                      .map((v) => v.trim())
+                      .filter(Boolean)
+                      .map((v) => Number(v))
+                      .filter((v) => Number.isFinite(v))
+
+                    if (values.length < 1) {
+                      setCustomError('Please enter at least one numeric value')
+                      setCustomResult(null)
+                      return
+                    }
+
+                    setCustomLoading(true)
+                    setCustomError(null)
+                    setCustomResult(null)
+
+                    try {
+                      const res = await apiPost<DemandForecastResponse>('/api/v1/forecast/demand', {
+                        hospital_id: hospitalId,
+                        blood_group: customBloodType,
+                        historical_demand: values,
+                        forecast_days: customForecastDays,
+                        end_date: customEndDate,
+                      })
+                      setCustomResult(res)
+                    } catch (err) {
+                      const message = err instanceof ApiError ? err.message : 'Failed to run forecast'
+                      setCustomError(message)
+                    } finally {
+                      setCustomLoading(false)
+                    }
+                  }}
+                >
+                  {customLoading ? 'Predicting…' : 'Predict'}
+                </button>
+              </div>
+
+              <div className="lg:col-span-2">
+                <h4 className="font-heading font-semibold text-medical-navy mb-2">Forecast Output</h4>
+                {customResult ? (
+                  <div>
+                    <p className="text-sm text-gray-600 mb-3">
+                      {customResult.model} • {customResult.blood_group} • {customResult.forecast_days} days
+                    </p>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <LineChart data={customChartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" />
+                        <YAxis />
+                        <Tooltip />
+                        <Line type="monotone" dataKey="q50" stroke="#00E5FF" strokeWidth={3} name="q50" />
+                        <Line type="monotone" dataKey="q10" stroke="#DC143C" strokeWidth={1} name="q10" dot={false} />
+                        <Line type="monotone" dataKey="q90" stroke="#DC143C" strokeWidth={1} name="q90" dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-600">Run a forecast to see results here.</p>
+                )}
+              </div>
             </div>
           </Card>
 

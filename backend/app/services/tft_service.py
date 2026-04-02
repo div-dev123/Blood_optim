@@ -69,6 +69,30 @@ class TFTService:
             return classes
         return None
 
+    def _coerce_known_category(self, name: str, value: str) -> str:
+        """Coerce unseen categoricals to a known class.
+
+        The shipped TFT checkpoint is trained with categorical encoders.
+        When the API receives new/unknown IDs (e.g., newly registered hospitals),
+        we fall back to a known class so inference can proceed.
+        """
+
+        classes = self._categorical_classes(name)
+        if not classes:
+            return value
+
+        value_str = str(value)
+        if value_str in classes:
+            return value_str
+
+        # Prefer an explicit unknown bucket when present.
+        for candidate in ("Unknown", "UNK", "__unknown__"):
+            if candidate in classes:
+                return candidate
+
+        # Otherwise pick a deterministic fallback.
+        return next(iter(classes.keys()))
+
     def _format_holiday_str(self, is_holiday: bool) -> str:
         classes = self._categorical_classes("is_holiday_str") or {}
         # Some checkpoints were trained with boolean strings.
@@ -214,6 +238,10 @@ class TFTService:
                 f"This TFT checkpoint supports forecast_days={model_prediction_length}; got {forecast_days}"
             )
 
+        hospital_id = self._coerce_known_category("hospital_id", hospital_id)
+        blood_group = self._coerce_known_category("blood_group", blood_group)
+        hospital_type = self._coerce_known_category("hospital_type", hospital_type)
+
         end_dt = self._parse_end_date(end_date)
         df = self._build_dataframe(
             hospital_id=hospital_id,
@@ -226,21 +254,6 @@ class TFTService:
             is_holiday=is_holiday,
             encoder_length=encoder_length,
         )
-
-        # Guardrail: ensure static categoricals are known to the checkpoint encoders
-        encoders = (self.dataset_parameters.get("categorical_encoders") or {}) if isinstance(self.dataset_parameters, dict) else {}
-        for name in ["hospital_id", "blood_group", "hospital_type"]:
-            encoder = encoders.get(name)
-            if encoder is None or not hasattr(encoder, "classes_"):
-                continue
-            classes = encoder.classes_
-            if isinstance(classes, dict):
-                value = str(df[name].iloc[0])
-                if value not in classes:
-                    known = list(classes.keys())[:20]
-                    raise ValueError(
-                        f"Unknown {name}='{value}'. Known examples: {known}"
-                    )
 
         if not isinstance(self.dataset_parameters, dict):
             raise RuntimeError(

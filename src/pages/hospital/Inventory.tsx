@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Search, Download, Plus, QrCode } from 'lucide-react'
+import { toast } from 'react-hot-toast'
 import Navbar from '../../components/common/Navbar'
 import Sidebar from '../../components/hospital/Sidebar'
 import Card from '../../components/common/Card'
@@ -8,13 +9,66 @@ import Button from '../../components/common/Button'
 import { BloodUnit, BloodType } from '../../types'
 import { getBloodTypeColor, calculateDaysUntilExpiry } from '../../utils/bloodTypeUtils'
 import { formatDate } from '../../utils/dateHelpers'
-import mockBloodUnits from '../../data/mockBloodUnits.json'
+import { createInventoryUnit, listInventoryUnits } from '../../api/inventory'
+import { useAuth } from '../../hooks/useAuth'
+import { ApiError } from '../../utils/apiClient'
 
 export default function Inventory() {
+  const { user, token } = useAuth()
+
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedBloodType, setSelectedBloodType] = useState<BloodType | 'all'>('all')
   const [viewMode] = useState<'table' | 'grid'>('table')
-  const [units] = useState<BloodUnit[]>(mockBloodUnits as BloodUnit[])
+  const [units, setUnits] = useState<BloodUnit[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  const hospitalId = useMemo(() => {
+    if (
+      user?.role === 'HOSPITAL' &&
+      user.profile &&
+      typeof (user.profile as { hospitalId?: unknown }).hospitalId === 'string'
+    ) {
+      return (user.profile as { hospitalId: string }).hospitalId
+    }
+    return 'H001'
+  }, [user])
+
+  const [showAddUnit, setShowAddUnit] = useState(false)
+  const [newUnit, setNewUnit] = useState({
+    bloodType: 'O+' as BloodType,
+    collectionDate: new Date().toISOString().slice(0, 10),
+    expiryDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 28).toISOString().slice(0, 10),
+    location: 'Main Storage',
+  })
+
+  useEffect(() => {
+    if (!token) return
+    const authToken = token
+    const controller = new AbortController()
+
+    async function load(currentToken: string) {
+      setLoading(true)
+      setLoadError(null)
+      try {
+        const rows = await listInventoryUnits({
+          hospitalId,
+          token: currentToken,
+          signal: controller.signal,
+        })
+        setUnits(rows)
+      } catch (err) {
+        if ((err as { name?: string }).name === 'AbortError') return
+        const message = err instanceof ApiError ? err.message : 'Failed to load inventory'
+        setLoadError(message)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load(authToken)
+    return () => controller.abort()
+  }, [hospitalId, token])
 
   const filteredUnits = units.filter(unit => {
     const matchesSearch = unit.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -43,12 +97,97 @@ export default function Inventory() {
                 <Download className="mr-2 inline" />
                 Export
               </Button>
-              <Button>
+              <Button onClick={() => setShowAddUnit((v) => !v)}>
                 <Plus className="mr-2 inline" />
                 Add Unit
               </Button>
             </div>
           </div>
+
+          {showAddUnit && (
+            <Card className="mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Blood Type</label>
+                  <select
+                    value={newUnit.bloodType}
+                    onChange={(e) => setNewUnit((s) => ({ ...s, bloodType: e.target.value as BloodType }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  >
+                    {bloodTypes.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Collection Date</label>
+                  <input
+                    type="date"
+                    value={newUnit.collectionDate}
+                    onChange={(e) => setNewUnit((s) => ({ ...s, collectionDate: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Expiry Date</label>
+                  <input
+                    type="date"
+                    value={newUnit.expiryDate}
+                    onChange={(e) => setNewUnit((s) => ({ ...s, expiryDate: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
+                  <input
+                    type="text"
+                    value={newUnit.location}
+                    onChange={(e) => setNewUnit((s) => ({ ...s, location: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                    placeholder="Main Storage"
+                  />
+                </div>
+
+                <div>
+                  <Button
+                    className="w-full"
+                    disabled={!token || loading}
+                    onClick={async () => {
+                      const authToken = token
+                      if (!authToken) {
+                        toast.error('Please login again')
+                        return
+                      }
+
+                      try {
+                        const created = await createInventoryUnit({
+                          token: authToken,
+                          hospitalId,
+                          bloodType: newUnit.bloodType,
+                          collectionDate: newUnit.collectionDate,
+                          expiryDate: newUnit.expiryDate,
+                          location: newUnit.location,
+                        })
+                        setUnits((prev) => [created, ...prev])
+                        toast.success('Blood unit added')
+                        setShowAddUnit(false)
+                      } catch (err) {
+                        const message = err instanceof ApiError ? err.message : 'Failed to add unit'
+                        toast.error(message)
+                      }
+                    }}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          )}
 
           {/* Filters */}
           <Card className="mb-6">
@@ -95,6 +234,12 @@ export default function Inventory() {
           {/* Table View */}
           {viewMode === 'table' && (
             <Card>
+              {loadError ? (
+                <div className="mb-4 text-sm text-gray-700">
+                  <span className="font-semibold text-medical-navy">Inventory note:</span> {loadError}
+                </div>
+              ) : null}
+              {loading ? <p className="text-sm text-gray-600">Loading inventory…</p> : null}
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>

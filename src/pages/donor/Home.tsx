@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Heart, MapPin, Award, Calendar, TrendingUp, Gift, Target } from 'lucide-react'
 import Navbar from '../../components/common/Navbar'
@@ -26,11 +26,82 @@ const nearbyOpportunities = [
   { name: 'Regional Hospital', distance: '8.7 km', need: 'Medium', bloodTypes: ['O-'], impact: 75 },
 ]
 
+type BloodCamp = {
+  id: string
+  name: string
+  date: string // YYYY-MM-DD
+  time: string
+  address: string
+  city: string
+  neededBloodTypes: BloodType[]
+  organizer: string
+}
+
+const upcomingCamps: BloodCamp[] = [
+  {
+    id: 'camp-001',
+    name: 'City Community Blood Camp',
+    date: '2026-03-08',
+    time: '10:00 – 16:00',
+    address: 'Community Hall, 12 Park Street',
+    city: 'Downtown',
+    neededBloodTypes: ['O+', 'A+', 'B+'],
+    organizer: 'Red Cross Partner',
+  },
+  {
+    id: 'camp-002',
+    name: 'University Campus Drive',
+    date: '2026-03-15',
+    time: '09:00 – 14:00',
+    address: 'Main Quad, North Gate',
+    city: 'University District',
+    neededBloodTypes: ['O-', 'A-', 'AB-'],
+    organizer: 'Campus Health Services',
+  },
+  {
+    id: 'camp-003',
+    name: 'Corporate Wellness Donation',
+    date: '2026-03-22',
+    time: '11:00 – 17:00',
+    address: 'Tower B Lobby, Tech Park',
+    city: 'Tech Park',
+    neededBloodTypes: ['AB+', 'B-', 'O+'],
+    organizer: 'City Blood Network',
+  },
+]
+
 export default function DonorHome() {
   const [creditScore] = useState(850)
   const [totalDonations] = useState(5)
   const [livesTouched] = useState(15)
   const [nextEligible] = useState('2026-03-15')
+
+  const [registeredCampIds, setRegisteredCampIds] = useState<string[]>([])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('donor.registeredCamps')
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) setRegisteredCampIds(parsed.filter((v) => typeof v === 'string'))
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const registeredSet = useMemo(() => new Set(registeredCampIds), [registeredCampIds])
+
+  function toggleRegistration(campId: string) {
+    setRegisteredCampIds((prev) => {
+      const next = prev.includes(campId) ? prev.filter((id) => id !== campId) : [campId, ...prev]
+      try {
+        localStorage.setItem('donor.registeredCamps', JSON.stringify(next))
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
 
   return (
     <div className="min-h-screen bg-clinical-white">
@@ -200,6 +271,70 @@ export default function DonorHome() {
               </div>
             </Card>
           </div>
+
+          {/* Upcoming Blood Camps */}
+          <Card className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-heading text-2xl font-semibold text-medical-navy">
+                  Upcoming Blood Camps
+                </h2>
+                <p className="text-gray-600 text-sm">Register to reserve a slot.</p>
+              </div>
+              <Calendar className="h-5 w-5 text-gray-400" />
+            </div>
+
+            <div className="space-y-4">
+              {upcomingCamps.map((camp, index) => {
+                const registered = registeredSet.has(camp.id)
+                return (
+                  <motion.div
+                    key={camp.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.08 }}
+                    className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-medical-navy mb-1">{camp.name}</h3>
+                        <p className="text-sm text-gray-600 mb-2">
+                          {camp.date} • {camp.time} • {camp.city}
+                        </p>
+                        <div className="flex items-center gap-2 text-sm text-gray-600 mb-3">
+                          <MapPin className="h-4 w-4" />
+                          <span>{camp.address}</span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {camp.neededBloodTypes.map((type) => (
+                            <span
+                              key={type}
+                              className="px-2 py-1 rounded text-xs text-white font-semibold"
+                              style={{ backgroundColor: getBloodTypeColor(type) }}
+                            >
+                              {type}
+                            </span>
+                          ))}
+                          <span className="text-xs text-gray-500">Organized by {camp.organizer}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-2">
+                        <Button
+                          size="sm"
+                          variant={registered ? 'outline' : 'primary'}
+                          onClick={() => toggleRegistration(camp.id)}
+                        >
+                          {registered ? 'Registered' : 'Register'}
+                        </Button>
+                        {registered ? <span className="text-xs text-oxygen-green">Slot reserved</span> : null}
+                      </div>
+                    </div>
+                  </motion.div>
+                )
+              })}
+            </div>
+          </Card>
 
           {/* Donation History */}
           <Card>

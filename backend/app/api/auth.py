@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import re
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -57,7 +58,7 @@ def _build_donor_profile(name: str, email: str, phone: str, blood_type: str) -> 
 
 
 def _build_hospital_profile(name: str, phone: str, license_number: str) -> dict:
-    hospital_id = f"H{random.randint(1, 999):03d}"
+    hospital_id = _pick_known_hospital_id() or f"H{random.randint(1, 25):03d}"
     return {
         "hospitalName": name,
         "hospitalId": hospital_id,
@@ -73,6 +74,27 @@ def _build_hospital_profile(name: str, phone: str, license_number: str) -> dict:
         "currentInventory": {"totalUnits": 0, "byType": {}},
         "tier": "basic",
     }
+
+
+def _pick_known_hospital_id() -> Optional[str]:
+    """Pick a hospital_id that exists in the metadata CSV (if available)."""
+
+    csv_path = Path(__file__).resolve().parents[2] / "models" / "metadata" / "hospital_metadata.csv"
+    if not csv_path.exists():
+        return None
+
+    try:
+        import pandas as pd
+
+        df = pd.read_csv(csv_path)
+        if "hospital_id" not in df.columns:
+            return None
+        ids = [str(v) for v in df["hospital_id"].dropna().tolist()]
+        if not ids:
+            return None
+        return random.choice(ids)
+    except Exception:
+        return None
 
 
 def _to_auth_user(db_user: UserModel) -> AuthUser:

@@ -4,7 +4,7 @@ import datetime as dt
 import json
 import uuid
 
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -41,3 +41,27 @@ class UserModel(Base):
         except Exception:
             pass
         return {}
+
+
+class BloodUnitModel(Base):
+    __tablename__ = "blood_units"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    hospital_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    blood_type: Mapped[str] = mapped_column(String(8), index=True, nullable=False)
+
+    collection_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    expiry_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="available")
+    location: Mapped[str] = mapped_column(String(128), nullable=False, default="Main Storage")
+    match_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: dt.datetime.now(dt.timezone.utc),
+        onupdate=lambda: dt.datetime.now(dt.timezone.utc),
+        nullable=False,
+    )
