@@ -1,4 +1,4 @@
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
@@ -6,15 +6,27 @@ import {
   Droplet, LogOut, Settings as SettingsIcon 
 } from 'lucide-react'
 import { useThemeStore } from '../../store/themeStore'
+import { useAuth } from '../../hooks/useAuth'
 
 export default function Navbar() {
-  const location = useLocation()
+  const navigate = useNavigate()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
   const { theme, toggleTheme } = useThemeStore()
+  const { user, isAuthenticated, logout } = useAuth()
 
-  const isDashboard = location.pathname.includes('/hospital') || location.pathname.includes('/donor')
+  const isDashboard = Boolean(isAuthenticated && user)
+  const dashboardPath = user?.role === 'HOSPITAL' ? '/hospital/dashboard' : '/donor/home'
+  const isHospital = user?.role === 'HOSPITAL'
+
+  const handleLogout = () => {
+    logout()
+    setIsUserMenuOpen(false)
+    setIsNotificationsOpen(false)
+    setIsMenuOpen(false)
+    navigate('/', { replace: true })
+  }
 
   return (
     <motion.nav
@@ -25,7 +37,7 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 group">
+          <Link to={isDashboard ? dashboardPath : '/'} className="flex items-center gap-2 group">
             <motion.div
               whileHover={{ rotate: 360 }}
               transition={{ duration: 0.5 }}
@@ -45,17 +57,25 @@ export default function Navbar() {
             </div>
           )}
 
+          {isDashboard && (
+            <div className="hidden md:flex items-center gap-8">
+              <Link to={dashboardPath} className="hover:text-ai-cyan transition-colors">
+                Dashboard
+              </Link>
+            </div>
+          )}
+
           {/* Right Side Actions */}
           <div className="flex items-center gap-4">
             {/* Search */}
-            {isDashboard && (
+            {isDashboard && isHospital && (
               <button className="p-2 hover:bg-white hover:bg-opacity-10 rounded-lg transition-colors">
                 <Search className="h-5 w-5" />
               </button>
             )}
 
             {/* Notifications */}
-            {isDashboard && (
+            {isDashboard && isHospital && (
               <div className="relative">
                 <button
                   onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
@@ -115,12 +135,16 @@ export default function Navbar() {
                     >
                       <Link
                         to="/settings"
+                        onClick={() => setIsUserMenuOpen(false)}
                         className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded cursor-pointer"
                       >
                         <SettingsIcon className="h-4 w-4" />
                         Settings
                       </Link>
-                      <button className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded w-full text-left">
+                      <button
+                        onClick={handleLogout}
+                        className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded w-full text-left"
+                      >
                         <LogOut className="h-4 w-4" />
                         Logout
                       </button>
@@ -151,10 +175,25 @@ export default function Navbar() {
             className="md:hidden bg-medical-navy border-t border-white border-opacity-20"
           >
             <div className="px-4 py-4 space-y-2">
-              <Link to="/" className="block py-2 hover:text-ai-cyan">Home</Link>
-              <Link to="/#features" className="block py-2 hover:text-ai-cyan">Features</Link>
-              <Link to="/#how-it-works" className="block py-2 hover:text-ai-cyan">How It Works</Link>
-              <Link to="/login" className="block py-2 hover:text-ai-cyan">Login</Link>
+              {!isDashboard ? (
+                <>
+                  <Link to="/" className="block py-2 hover:text-ai-cyan">Home</Link>
+                  <Link to="/#features" className="block py-2 hover:text-ai-cyan">Features</Link>
+                  <Link to="/#how-it-works" className="block py-2 hover:text-ai-cyan">How It Works</Link>
+                  <Link to="/login" className="block py-2 hover:text-ai-cyan">Login</Link>
+                </>
+              ) : (
+                <>
+                  <Link to={dashboardPath} className="block py-2 hover:text-ai-cyan">Dashboard</Link>
+                  <Link to="/settings" className="block py-2 hover:text-ai-cyan">Settings</Link>
+                  <button
+                    onClick={handleLogout}
+                    className="block py-2 hover:text-ai-cyan text-left w-full"
+                  >
+                    Logout
+                  </button>
+                </>
+              )}
             </div>
           </motion.div>
         )}

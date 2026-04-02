@@ -11,7 +11,8 @@ import MatchScore from './pages/hospital/MatchScore'
 import Analytics from './pages/hospital/Analytics'
 import DonorHome from './pages/donor/Home'
 import Settings from './pages/Settings'
-import { AuthProvider, useAuth } from './hooks/useAuth'
+import { AuthProvider } from './hooks/AuthProvider'
+import { useAuth } from './hooks/useAuth'
 import type { UserRole } from './types'
 
 function ProtectedRoute({
@@ -24,7 +25,17 @@ function ProtectedRoute({
   const { user, isAuthenticated } = useAuth()
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/login" replace />
+    const onlyHospital =
+      allowedRoles.length === 1 && allowedRoles[0] === 'HOSPITAL'
+    const onlyDonor = allowedRoles.length === 1 && allowedRoles[0] === 'DONOR'
+
+    const loginPath = onlyHospital
+      ? '/login?role=hospital'
+      : onlyDonor
+        ? '/login?role=donor'
+        : '/login'
+
+    return <Navigate to={loginPath} replace />
   }
 
   if (!allowedRoles.includes(user.role)) {
@@ -40,11 +51,27 @@ function ProtectedRoute({
 }
 
 function AppRoutes() {
+  const { user, isAuthenticated } = useAuth()
+
+  const defaultAuthedPath =
+    isAuthenticated && user
+      ? user.role === 'HOSPITAL'
+        ? '/hospital/dashboard'
+        : '/donor/home'
+      : '/'
+
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+
+      {/* Role entry points */}
+      <Route
+        path="/hospital"
+        element={<Navigate to="/hospital/dashboard" replace />}
+      />
+      <Route path="/donor" element={<Navigate to="/donor/home" replace />} />
 
       {/* Hospital routes */}
       <Route
@@ -117,7 +144,7 @@ function AppRoutes() {
       />
 
       {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to={defaultAuthedPath} replace />} />
     </Routes>
   )
 }

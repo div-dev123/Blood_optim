@@ -112,7 +112,7 @@ export default function Landing() {
                   Join as Donor <ArrowRight className="ml-2 inline" />
                 </Button>
               </Link>
-              <Link to="/login">
+              <Link to="/login?role=hospital">
                 <Button variant="secondary" size="lg" className="w-full sm:w-auto">
                   Hospital Login
                 </Button>

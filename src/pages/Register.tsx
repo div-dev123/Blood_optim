@@ -5,7 +5,8 @@ import { Droplet, ArrowRight, ArrowLeft, Building2, User, Mail, Lock, Phone } fr
 import { toast } from 'react-hot-toast'
 import Navbar from '../components/common/Navbar'
 import Button from '../components/common/Button'
-import { useAuth, DEMO_HOSPITAL_USER, DEMO_DONOR_USER } from '../hooks/useAuth'
+import { useAuth } from '../hooks/useAuth'
+import { DEMO_HOSPITAL_USER, DEMO_DONOR_USER } from '../hooks/mockAuth'
 
 type UserType = 'HOSPITAL' | 'DONOR' | null
 
@@ -38,7 +39,7 @@ export default function Register() {
         userType === 'HOSPITAL'
           ? {
               ...(baseUser.profile as any),
-              contactPerson: formData.name,
+              hospitalName: formData.name || (baseUser.profile as any).hospitalName,
               license: formData.hospitalLicense || (baseUser.profile as any).license,
               phone: formData.phone || (baseUser.profile as any).phone,
             }
@@ -65,6 +66,10 @@ export default function Register() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (step === 2 && formData.password !== formData.confirmPassword) {
+      toast.error('Passwords do not match')
+      return
+    }
     if (step < 4) {
       setStep(step + 1)
     } else {
@@ -182,7 +187,7 @@ export default function Register() {
                     </h2>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Full Name
+                        {userType === 'HOSPITAL' ? 'Hospital Name' : 'Full Name'}
                       </label>
                       <input
                         type="text"
@@ -330,7 +335,7 @@ export default function Register() {
                       We've sent a verification code to {formData.email}
                     </p>
                     <div className="flex gap-2 justify-center">
-                      {[0, 1, 2, 3, 5, 6].map((i) => (
+                      {[0, 1, 2, 3, 4, 5].map((i) => (
                         <input
                           key={i}
                           type="text"

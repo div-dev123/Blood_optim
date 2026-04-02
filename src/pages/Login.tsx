@@ -1,22 +1,58 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Eye, EyeOff, Mail, Lock, Droplet } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import Navbar from '../components/common/Navbar'
 import Button from '../components/common/Button'
-import { useAuth, mockLogin, DEMO_HOSPITAL_USER, DEMO_DONOR_USER } from '../hooks/useAuth'
-import type { UserRole } from '../types'
+import { useAuth } from '../hooks/useAuth'
+import { mockLogin, DEMO_HOSPITAL_USER, DEMO_DONOR_USER } from '../hooks/mockAuth'
+import type { DonorProfile, HospitalProfile, UserRole } from '../types'
 
 export default function Login() {
+  const location = useLocation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [role, setRole] = useState<UserRole>('DONOR')
+  const [roleLocked, setRoleLocked] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
-  const { login } = useAuth()
+  const { login, isAuthenticated, user } = useAuth()
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      navigate(user.role === 'HOSPITAL' ? '/hospital/dashboard' : '/donor/home', {
+        replace: true,
+      })
+    }
+  }, [isAuthenticated, navigate, user])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const roleParam = params.get('role')
+    if (!roleParam) {
+      setRoleLocked(false)
+      return
+    }
+
+    const normalized = roleParam.toLowerCase()
+    if (normalized === 'hospital') {
+      setRole('HOSPITAL')
+      setRoleLocked(true)
+      return
+    }
+
+    if (normalized === 'donor') {
+      setRole('DONOR')
+      setRoleLocked(true)
+      return
+    }
+
+    setRoleLocked(false)
+  }, [location.search])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -24,13 +60,13 @@ export default function Login() {
     setLoading(true)
 
     try {
-      const response = await mockLogin(email, password)
-      login(response.user, response.token)
+      const response = await mockLogin(email, password, role)
+      login(response.user, response.token, { remember: rememberMe })
 
       const name =
         response.user.role === 'HOSPITAL'
-          ? (response.user.profile as any).hospitalName
-          : (response.user.profile as any).firstName
+          ? (response.user.profile as HospitalProfile).hospitalName
+          : (response.user.profile as DonorProfile).firstName
 
       if (response.user.role === 'HOSPITAL') {
         navigate('/hospital/dashboard')
@@ -48,7 +84,7 @@ export default function Login() {
 
   const handleDemoLogin = (role: UserRole) => {
     const demoUser = role === 'HOSPITAL' ? DEMO_HOSPITAL_USER : DEMO_DONOR_USER
-    login(demoUser, 'demo-token-123')
+    login(demoUser, 'demo-token-123', { remember: true })
     if (role === 'HOSPITAL') {
       navigate('/hospital/dashboard')
     } else {
@@ -84,6 +120,33 @@ export default function Login() {
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">
                 {error}
+              </div>
+            )}
+
+            {!roleLocked && (
+              <div className="grid grid-cols-2 gap-2 mb-6">
+                <button
+                  type="button"
+                  onClick={() => setRole('DONOR')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-colors border-2 ${
+                    role === 'DONOR'
+                      ? 'border-vital-crimson bg-vital-crimson text-white'
+                      : 'border-gray-200 text-gray-700 hover:border-vital-crimson'
+                  }`}
+                >
+                  Donor
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRole('HOSPITAL')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-colors border-2 ${
+                    role === 'HOSPITAL'
+                      ? 'border-medical-navy bg-medical-navy text-white'
+                      : 'border-gray-200 text-gray-700 hover:border-medical-navy'
+                  }`}
+                >
+                  Hospital
+                </button>
               </div>
             )}
 
@@ -139,9 +202,13 @@ export default function Login() {
                   />
                   <span className="ml-2 text-sm text-gray-600">Remember me</span>
                 </label>
-                <Link to="#" className="text-sm text-vital-crimson hover:underline">
+                <button
+                  type="button"
+                  onClick={() => toast.error('Password reset is not available in this demo')}
+                  className="text-sm text-vital-crimson hover:underline"
+                >
                   Forgot password?
-                </Link>
+                </button>
               </div>
 
               <Button type="submit" className="w-full" size="lg">
@@ -160,6 +227,7 @@ export default function Login() {
               <div className="grid grid-cols-2 gap-4">
                 <button
                   type="button"
+                  onClick={() => toast.error('Google login is not configured in this demo')}
                   className="flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   <svg className="h-5 w-5" viewBox="0 0 24 24">
@@ -172,6 +240,7 @@ export default function Login() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => toast.error('Microsoft login is not configured in this demo')}
                   className="flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
@@ -183,20 +252,24 @@ export default function Login() {
 
               {/* Demo logins */}
               <div className="space-y-3">
-                <button
-                  type="button"
-                  onClick={() => handleDemoLogin('HOSPITAL')}
-                  className="w-full border-2 border-medical-navy text-medical-navy py-3 rounded-lg font-semibold hover:bg-medical-navy hover:text-white transition-colors"
-                >
-                  🏥 Login as Hospital Admin
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDemoLogin('DONOR')}
-                  className="w-full border-2 border-vital-crimson text-vital-crimson py-3 rounded-lg font-semibold hover:bg-vital-crimson hover:text-white transition-colors"
-                >
-                  🩸 Login as Donor
-                </button>
+                {(role === 'HOSPITAL' || !roleLocked) && (
+                  <button
+                    type="button"
+                    onClick={() => handleDemoLogin('HOSPITAL')}
+                    className="w-full border-2 border-medical-navy text-medical-navy py-3 rounded-lg font-semibold hover:bg-medical-navy hover:text-white transition-colors"
+                  >
+                    Login as Hospital Admin
+                  </button>
+                )}
+                {(role === 'DONOR' || !roleLocked) && (
+                  <button
+                    type="button"
+                    onClick={() => handleDemoLogin('DONOR')}
+                    className="w-full border-2 border-vital-crimson text-vital-crimson py-3 rounded-lg font-semibold hover:bg-vital-crimson hover:text-white transition-colors"
+                  >
+                    Login as Donor
+                  </button>
+                )}
               </div>
 
               <p className="text-center text-sm text-gray-600">

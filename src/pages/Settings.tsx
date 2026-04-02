@@ -1,14 +1,44 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { User, Bell, Palette, Shield, Moon, Sun, Volume2, Mail, Smartphone } from 'lucide-react'
+import { toast } from 'react-hot-toast'
 import Navbar from '../components/common/Navbar'
 import Sidebar from '../components/hospital/Sidebar'
 import Card from '../components/common/Card'
 import Button from '../components/common/Button'
 import { useThemeStore } from '../store/themeStore'
+import { useAuth } from '../hooks/useAuth'
+import type { DonorProfile, HospitalProfile } from '../types'
 
 export default function Settings() {
   const { theme, toggleTheme } = useThemeStore()
+  const { user, updateUser } = useAuth()
+
+  const isHospital = user?.role === 'HOSPITAL'
+
+  const profile = useMemo(() => {
+    if (!user) return null
+    return user.profile
+  }, [user])
+
+  const [displayName, setDisplayName] = useState('')
+  const [phone, setPhone] = useState('')
+
+  useEffect(() => {
+    if (!user || !profile) return
+
+    if (user.role === 'HOSPITAL') {
+      const p = profile as HospitalProfile
+      setDisplayName(p.hospitalName)
+      setPhone(p.phone)
+      return
+    }
+
+    const p = profile as DonorProfile
+    setDisplayName(`${p.firstName} ${p.lastName}`.trim())
+    setPhone(p.phone)
+  }, [profile, user])
+
   const [notifications, setNotifications] = useState({
     email: true,
     sms: false,
@@ -16,11 +46,67 @@ export default function Settings() {
     alerts: true,
   })
 
+  const roleSpecific = useMemo(() => {
+    if (!user || !profile) return null
+    if (user.role === 'HOSPITAL') {
+      const p = profile as HospitalProfile
+      return { label: 'License Number', value: p.license }
+    }
+    const p = profile as DonorProfile
+    return { label: 'Blood Type', value: p.bloodType }
+  }, [profile, user])
+
+  const handleSaveProfile = () => {
+    if (!user || !profile) return
+
+    const trimmedName = displayName.trim()
+    const trimmedPhone = phone.trim()
+
+    if (!trimmedName) {
+      toast.error(isHospital ? 'Hospital name is required' : 'Full name is required')
+      return
+    }
+    if (!trimmedPhone) {
+      toast.error('Phone number is required')
+      return
+    }
+
+    if (user.role === 'HOSPITAL') {
+      const p = profile as HospitalProfile
+      updateUser({
+        ...user,
+        profile: {
+          ...p,
+          hospitalName: trimmedName,
+          phone: trimmedPhone,
+        },
+      })
+      toast.success('Profile updated')
+      return
+    }
+
+    const p = profile as DonorProfile
+    const parts = trimmedName.split(' ').filter(Boolean)
+    const firstName = parts[0] ?? p.firstName
+    const lastName = parts.slice(1).join(' ') || p.lastName
+
+    updateUser({
+      ...user,
+      profile: {
+        ...p,
+        firstName,
+        lastName,
+        phone: trimmedPhone,
+      },
+    })
+    toast.success('Profile updated')
+  }
+
   return (
     <div className="min-h-screen bg-clinical-white">
       <Navbar />
-      <Sidebar />
-      <div className="ml-64 p-8">
+      {isHospital && <Sidebar />}
+      <div className={isHospital ? 'ml-64 p-8' : 'p-8 max-w-7xl mx-auto'}>
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -40,12 +126,14 @@ export default function Settings() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Full Name
+                  {isHospital ? 'Hospital Name' : 'Full Name'}
                 </label>
                 <input
                   type="text"
-                  defaultValue="Dr. Sarah Johnson"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson focus:border-transparent outline-none"
+                  placeholder={isHospital ? 'e.g. Central City Hospital' : 'e.g. Priya Sharma'}
                 />
               </div>
               <div>
@@ -54,8 +142,9 @@ export default function Settings() {
                 </label>
                 <input
                   type="email"
-                  defaultValue="sarah.johnson@hospital.com"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson focus:border-transparent outline-none"
+                  value={user?.email ?? ''}
+                  disabled
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-600"
                 />
               </div>
               <div>
@@ -64,24 +153,25 @@ export default function Settings() {
                 </label>
                 <input
                   type="tel"
-                  defaultValue="+1 (555) 123-4567"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson focus:border-transparent outline-none"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Role
+                  {roleSpecific?.label ?? 'Account'}
                 </label>
                 <input
                   type="text"
-                  defaultValue="Hospital Administrator"
+                  value={roleSpecific?.value ?? (isHospital ? 'Hospital' : 'Donor')}
                   disabled
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-600"
                 />
               </div>
             </div>
             <div className="mt-6">
-              <Button>Save Changes</Button>
+              <Button onClick={handleSaveProfile}>Save Changes</Button>
             </div>
           </Card>
 
