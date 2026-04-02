@@ -25,6 +25,23 @@ __pycache__/
 lightning_logs/
 backend/tft_outputs/
 
+# Backend model artifacts should not be committed in the code-only repo
+backend/models/
+
+# Common ML weight artifacts
+*.pt
+*.ckpt
+
+# Local model/data artifacts (canonical copies live under backend/models/)
+/patchgru_best_model_fixed.pt
+/tft_blood_demand_model.ckpt
+/hospital_metadata.csv
+/hospital_network.csv
+
+# Local experimentation data/outputs
+/tft_outputs/
+/ml_ready_datasets/
+
 # Environment files
 .env
 .env.*
