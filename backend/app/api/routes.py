@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from .auth import router as auth_router
 from ..schemas import (
     DemandForecastRequest,
     DemandForecastResponse,
@@ -12,6 +13,8 @@ from ..schemas import (
 
 
 router = APIRouter(prefix="/api/v1")
+
+router.include_router(auth_router)
 
 
 @router.get("/health")

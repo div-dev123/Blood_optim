@@ -34,9 +34,11 @@
    
    The app will be available at `http://localhost:5173`
 
-### (Optional) Run the Backend for Live Forecasts
+### Run the Backend (Required for Login/Register)
 
-The hospital **Predictions** page now calls the FastAPI backend for live **TFT** demand forecasts and **PatchGRU** expiry-risk forecasts. If the backend is not running, the UI falls back to mock data.
+Login/Register now uses the FastAPI backend with a SQLite database for persistence (stored at `backend/app.db`).
+
+The hospital **Predictions** page also calls the backend for live **TFT** demand forecasts and **PatchGRU** expiry-risk forecasts. If ML artifacts are missing, the backend will still run, but forecast endpoints may return `503`.
 
 1. **Install backend dependencies**
    ```bash
@@ -54,6 +56,10 @@ The hospital **Predictions** page now calls the FastAPI backend for live **TFT**
    # Option B: run from repo root (avoids: ModuleNotFoundError: No module named 'app')
    # python -m uvicorn app.main:app --reload --port 8000 --app-dir backend
    ```
+
+3. **Demo credentials (seeded on startup)**
+   - Hospital: `admin@hospital.demo` / `demo1234`
+   - Donor: `donor@demo.com` / `demo1234`
 
 Vite is configured to proxy `/api/*` to `http://127.0.0.1:8000` in dev.
 

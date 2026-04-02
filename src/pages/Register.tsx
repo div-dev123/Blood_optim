@@ -6,7 +6,9 @@ import { toast } from 'react-hot-toast'
 import Navbar from '../components/common/Navbar'
 import Button from '../components/common/Button'
 import { useAuth } from '../hooks/useAuth'
-import { DEMO_HOSPITAL_USER, DEMO_DONOR_USER } from '../hooks/mockAuth'
+import { registerUser } from '../api/auth'
+import type { BloodType } from '../types'
+import { ApiError } from '../utils/apiClient'
 
 type UserType = 'HOSPITAL' | 'DONOR' | null
 
@@ -25,46 +27,39 @@ export default function Register() {
   const navigate = useNavigate()
   const { login } = useAuth()
 
-  const handleComplete = () => {
+  const handleComplete = async () => {
     if (!userType) return
 
-    // For the demo we log into predefined users but keep entered email for realism
-    const baseUser =
-      userType === 'HOSPITAL' ? DEMO_HOSPITAL_USER : DEMO_DONOR_USER
+    try {
+      const response = await registerUser({
+        email: formData.email,
+        password: formData.password,
+        role: userType,
+        name: formData.name,
+        phone: formData.phone,
+        bloodType: userType === 'DONOR' ? (formData.bloodType as BloodType) : undefined,
+        hospitalLicense: userType === 'HOSPITAL' ? formData.hospitalLicense : undefined,
+      })
 
-    const user = {
-      ...baseUser,
-      email: formData.email,
-      profile:
+      login(response.user, response.token)
+
+      toast.success(
         userType === 'HOSPITAL'
-          ? {
-              ...(baseUser.profile as any),
-              hospitalName: formData.name || (baseUser.profile as any).hospitalName,
-              license: formData.hospitalLicense || (baseUser.profile as any).license,
-              phone: formData.phone || (baseUser.profile as any).phone,
-            }
-          : {
-              ...(baseUser.profile as any),
-              firstName: formData.name.split(' ')[0] || (baseUser.profile as any).firstName,
-              lastName: formData.name.split(' ').slice(1).join(' ') || (baseUser.profile as any).lastName,
-              phone: formData.phone || (baseUser.profile as any).phone,
-              bloodType: (formData.bloodType || (baseUser.profile as any).bloodType) as any,
-              email: formData.email,
-            },
+          ? 'Hospital account created successfully'
+          : 'Donor account created successfully',
+      )
+
+      navigate(userType === 'HOSPITAL' ? '/hospital/dashboard' : '/donor/home')
+    } catch (err) {
+      if (err instanceof ApiError) {
+        toast.error(err.message)
+      } else {
+        toast.error('Registration failed')
+      }
     }
-
-    login(user, 'demo-token-123')
-
-    toast.success(
-      userType === 'HOSPITAL'
-        ? 'Hospital account created successfully'
-        : 'Donor account created successfully',
-    )
-
-    navigate(userType === 'HOSPITAL' ? '/hospital/dashboard' : '/donor/home')
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (step === 2 && formData.password !== formData.confirmPassword) {
       toast.error('Passwords do not match')
@@ -73,7 +68,7 @@ export default function Register() {
     if (step < 4) {
       setStep(step + 1)
     } else {
-      handleComplete()
+      await handleComplete()
     }
   }
 

@@ -6,7 +6,8 @@ import { toast } from 'react-hot-toast'
 import Navbar from '../components/common/Navbar'
 import Button from '../components/common/Button'
 import { useAuth } from '../hooks/useAuth'
-import { mockLogin, DEMO_HOSPITAL_USER, DEMO_DONOR_USER } from '../hooks/mockAuth'
+import { loginUser } from '../api/auth'
+import { ApiError } from '../utils/apiClient'
 import type { DonorProfile, HospitalProfile, UserRole } from '../types'
 
 export default function Login() {
@@ -60,7 +61,7 @@ export default function Login() {
     setLoading(true)
 
     try {
-      const response = await mockLogin(email, password, role)
+      const response = await loginUser({ email, password, role })
       login(response.user, response.token, { remember: rememberMe })
 
       const name =
@@ -75,20 +76,34 @@ export default function Login() {
       }
 
       toast.success(`Welcome back, ${name}!`)
-    } catch {
-      setError('Invalid email or password')
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message)
+      } else {
+        setError('Invalid email or password')
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  const handleDemoLogin = (role: UserRole) => {
-    const demoUser = role === 'HOSPITAL' ? DEMO_HOSPITAL_USER : DEMO_DONOR_USER
-    login(demoUser, 'demo-token-123', { remember: true })
-    if (role === 'HOSPITAL') {
-      navigate('/hospital/dashboard')
-    } else {
-      navigate('/donor/home')
+  const handleDemoLogin = async (targetRole: UserRole) => {
+    setError('')
+    setLoading(true)
+    try {
+      const demoEmail = targetRole === 'HOSPITAL' ? 'admin@hospital.demo' : 'donor@demo.com'
+      const demoPassword = 'demo1234'
+      const response = await loginUser({ email: demoEmail, password: demoPassword, role: targetRole })
+      login(response.user, response.token, { remember: true })
+      navigate(targetRole === 'HOSPITAL' ? '/hospital/dashboard' : '/donor/home')
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message)
+      } else {
+        setError('Demo login failed')
+      }
+    } finally {
+      setLoading(false)
     }
   }
 

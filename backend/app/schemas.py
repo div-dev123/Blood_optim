@@ -5,6 +5,37 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class AuthRegisterRequest(BaseModel):
+    email: str = Field(..., min_length=3)
+    password: str = Field(..., min_length=6)
+    role: str = Field(..., pattern="^(HOSPITAL|DONOR)$")
+
+    name: str = Field(..., min_length=1)
+    phone: str = Field(..., min_length=1)
+
+    blood_type: Optional[str] = None
+    hospital_license: Optional[str] = None
+
+
+class AuthLoginRequest(BaseModel):
+    email: str = Field(..., min_length=3)
+    password: str = Field(..., min_length=1)
+    role: str = Field(..., pattern="^(HOSPITAL|DONOR)$")
+
+
+class AuthUser(BaseModel):
+    id: str
+    email: str
+    role: str
+    profile: dict
+    isAuthenticated: bool = True
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: AuthUser
+
+
 class DemandForecastRequest(BaseModel):
     hospital_id: str = Field(..., min_length=1)
     blood_group: str = Field(..., min_length=1)

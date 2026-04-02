@@ -21,6 +21,11 @@ __pycache__/
 *.pyd
 .pytest_cache/
 
+# Local databases (generated at runtime)
+*.db
+*.sqlite3
+*.db-journal
+
 # Training/runtime artifacts
 lightning_logs/
 backend/tft_outputs/

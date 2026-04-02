@@ -94,3 +94,27 @@ export async function apiPost<T>(
 
   return (await res.json()) as T
 }
+
+export async function apiGetAuth<T>(
+  path: string,
+  token: string,
+  options?: { signal?: AbortSignal },
+): Promise<T> {
+  const url = joinUrl(API_BASE_URL, path)
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    signal: options?.signal,
+  })
+
+  if (!res.ok) {
+    const body = await parseErrorBody(res)
+    const message = extractDetail(body) ?? `${res.status} ${res.statusText}`
+    throw new ApiError(message, res.status, body)
+  }
+
+  return (await res.json()) as T
+}
