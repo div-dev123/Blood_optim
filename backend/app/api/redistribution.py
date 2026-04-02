@@ -174,9 +174,17 @@ def recommendations(
     if not to_hospital_id:
         return []
 
-    csv_path = Path(__file__).resolve().parents[2] / ".." / ".." / "hospital_network.csv"
-    csv_path = csv_path.resolve()
-    if not csv_path.exists():
+    here = Path(__file__).resolve()
+
+    # repo root: .../backend/app/api/redistribution.py -> parents[3] == repo root
+    # also support historical location under backend/models/metadata
+    csv_candidates = [
+        here.parents[2] / "models" / "metadata" / "hospital_network.csv",
+        here.parents[3] / "hospital_network.csv",
+        Path.cwd() / "hospital_network.csv",
+    ]
+    csv_path = next((p for p in csv_candidates if p.exists()), None)
+    if csv_path is None:
         return []
 
     try:
@@ -227,9 +235,23 @@ def recommendations(
         except Exception:
             pass
 
-    candidates = edges[edges[to_col] == to_hospital_id]
+    # Some demo profiles may have hospital IDs that don't exist in the network CSV.
+    # In that case, map the ID into the network's ID space (H001..H025) for lookup,
+    # but keep the real hospitalId in the returned recommendations.
+    nodes = set(edges[from_col].unique().tolist()) | set(edges[to_col].unique().tolist())
+    lookup_to_id = to_hospital_id
+    if lookup_to_id not in nodes:
+        import re
+
+        m = re.fullmatch(r"H(\d+)", lookup_to_id)
+        if m:
+            n = int(m.group(1))
+            mapped = ((n - 1) % 25) + 1
+            lookup_to_id = f"H{mapped:03d}"
+
+    candidates = edges[edges[to_col] == lookup_to_id]
     if candidates.empty:
-        candidates = edges[edges[from_col] == to_hospital_id]
+        candidates = edges[edges[from_col] == lookup_to_id]
         # If only outgoing edges, invert for recommendations.
         candidates = candidates.rename(columns={to_col: from_col, from_col: to_col})
 
