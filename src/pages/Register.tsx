@@ -23,9 +23,44 @@ export default function Register() {
     phone: '',
     bloodType: '',
     hospitalLicense: '',
+    dateOfBirth: '',
+    weightKg: '',
+    lastDonationDate: '',
   })
   const navigate = useNavigate()
   const { login } = useAuth()
+
+  function todayIso(): string {
+    return new Date().toISOString().slice(0, 10)
+  }
+
+  function calculateAge(dobIso: string): number | null {
+    if (!dobIso) return null
+    const dob = new Date(dobIso)
+    if (Number.isNaN(dob.getTime())) return null
+    const now = new Date()
+
+    let age = now.getFullYear() - dob.getFullYear()
+    const m = now.getMonth() - dob.getMonth()
+    if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) {
+      age -= 1
+    }
+    return age
+  }
+
+  function saveDonorExtras(userId: string) {
+    const payload = {
+      dateOfBirth: formData.dateOfBirth || null,
+      weightKg: formData.weightKg ? Number(formData.weightKg) : null,
+      lastDonationDate: formData.lastDonationDate || null,
+      updatedAt: new Date().toISOString(),
+    }
+    try {
+      localStorage.setItem(`donor.extras.v1:${userId}`, JSON.stringify(payload))
+    } catch {
+      // ignore
+    }
+  }
 
   const handleComplete = async () => {
     if (!userType) return
@@ -42,6 +77,10 @@ export default function Register() {
       })
 
       login(response.user, response.token)
+
+      if (userType === 'DONOR') {
+        saveDonorExtras(response.user.id)
+      }
 
       toast.success(
         userType === 'HOSPITAL'
@@ -65,6 +104,34 @@ export default function Register() {
       toast.error('Passwords do not match')
       return
     }
+
+    if (step === 3 && userType === 'DONOR') {
+      const age = calculateAge(formData.dateOfBirth)
+      if (age === null) {
+        toast.error('Please enter your date of birth')
+        return
+      }
+      if (age < 18 || age > 65) {
+        toast.error('Donors must be between 18 and 65 years old')
+        return
+      }
+
+      const weight = formData.weightKg ? Number(formData.weightKg) : NaN
+      if (!Number.isFinite(weight)) {
+        toast.error('Please enter your weight')
+        return
+      }
+      if (weight < 50) {
+        toast.error('Minimum weight to donate is 50kg')
+        return
+      }
+
+      if (formData.lastDonationDate && formData.lastDonationDate > todayIso()) {
+        toast.error('Last donation date cannot be in the future')
+        return
+      }
+    }
+
     if (step < 4) {
       setStep(step + 1)
     } else {
@@ -274,26 +341,64 @@ export default function Register() {
                         />
                       </div>
                     ) : (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Blood Type
-                        </label>
-                        <select
-                          value={formData.bloodType}
-                          onChange={(e) => setFormData({ ...formData, bloodType: e.target.value })}
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson focus:border-transparent outline-none"
-                          required
-                        >
-                          <option value="">Select blood type</option>
-                          <option value="O+">O+</option>
-                          <option value="O-">O-</option>
-                          <option value="A+">A+</option>
-                          <option value="A-">A-</option>
-                          <option value="B+">B+</option>
-                          <option value="B-">B-</option>
-                          <option value="AB+">AB+</option>
-                          <option value="AB-">AB-</option>
-                        </select>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Blood Type</label>
+                          <select
+                            value={formData.bloodType}
+                            onChange={(e) => setFormData({ ...formData, bloodType: e.target.value })}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson focus:border-transparent outline-none"
+                            required
+                          >
+                            <option value="">Select blood type</option>
+                            <option value="O+">O+</option>
+                            <option value="O-">O-</option>
+                            <option value="A+">A+</option>
+                            <option value="A-">A-</option>
+                            <option value="B+">B+</option>
+                            <option value="B-">B-</option>
+                            <option value="AB+">AB+</option>
+                            <option value="AB-">AB-</option>
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Date of Birth</label>
+                            <input
+                              type="date"
+                              value={formData.dateOfBirth}
+                              onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson focus:border-transparent outline-none"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Weight (kg)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.1}
+                              value={formData.weightKg}
+                              onChange={(e) => setFormData({ ...formData, weightKg: e.target.value })}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson focus:border-transparent outline-none"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Last Donation (optional)</label>
+                            <input
+                              type="date"
+                              value={formData.lastDonationDate}
+                              onChange={(e) => setFormData({ ...formData, lastDonationDate: e.target.value })}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson focus:border-transparent outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-gray-500">
+                          We use this to show eligibility reminders. You can update it later.
+                        </p>
                       </div>
                     )}
                     <div>
