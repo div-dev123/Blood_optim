@@ -48,7 +48,11 @@ The hospital **Predictions** page now calls the FastAPI backend for live **TFT**
 
 2. **Start the API server**
    ```bash
+   # Option A (recommended): run from inside backend/
    python -m uvicorn app.main:app --reload --port 8000
+
+   # Option B: run from repo root (avoids: ModuleNotFoundError: No module named 'app')
+   # python -m uvicorn app.main:app --reload --port 8000 --app-dir backend
    ```
 
 Vite is configured to proxy `/api/*` to `http://127.0.0.1:8000` in dev.

@@ -26,6 +26,17 @@ cd backend
 python -m uvicorn app.main:app --reload --port 8000
 ```
 
+If you run Uvicorn from the repo root, Python won't be able to import `app` (because the package lives under `backend/app`). Use one of these:
+
+```bash
+# From repo root
+python -m uvicorn app.main:app --reload --port 8000 --app-dir backend
+
+# Or: cd backend (recommended)
+cd backend
+python -m uvicorn app.main:app --reload --port 8000
+```
+
 If you see `ModuleNotFoundError` for ML packages (e.g. `pytorch_forecasting`), it usually means `uvicorn` is being run from a different Python than your virtualenv. Using `python -m uvicorn ...` ensures the active interpreter is used.
 
 Open:
