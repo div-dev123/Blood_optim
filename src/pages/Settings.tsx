@@ -9,10 +9,12 @@ import Button from '../components/common/Button'
 import { useThemeStore } from '../store/themeStore'
 import { useAuth } from '../hooks/useAuth'
 import type { DonorProfile, HospitalProfile } from '../types'
+import { ApiError } from '../utils/apiClient'
+import { deleteMyAccount, exportMyData, updateMyProfile } from '../api/auth'
 
 export default function Settings() {
   const { theme, toggleTheme } = useThemeStore()
-  const { user, updateUser } = useAuth()
+  const { user, token, logout, updateUser } = useAuth()
 
   const isHospital = user?.role === 'HOSPITAL'
 
@@ -23,6 +25,15 @@ export default function Settings() {
 
   const [displayName, setDisplayName] = useState('')
   const [phone, setPhone] = useState('')
+
+  const [notifications, setNotifications] = useState({
+    email: true,
+    sms: false,
+    push: true,
+    alerts: true,
+  })
+
+  const [animationSpeed, setAnimationSpeed] = useState<'Normal' | 'Fast' | 'Reduced Motion'>('Normal')
 
   useEffect(() => {
     if (!user || !profile) return
@@ -37,14 +48,18 @@ export default function Settings() {
     const p = profile as DonorProfile
     setDisplayName(`${p.firstName} ${p.lastName}`.trim())
     setPhone(p.phone)
-  }, [profile, user])
 
-  const [notifications, setNotifications] = useState({
-    email: true,
-    sms: false,
-    push: true,
-    alerts: true,
-  })
+    const prefs = (profile as unknown as { notificationPreferences?: unknown }).notificationPreferences
+    if (prefs && typeof prefs === 'object') {
+      const v = prefs as Partial<typeof notifications>
+      setNotifications((prev) => ({ ...prev, ...v }))
+    }
+
+    const anim = (profile as unknown as { animationSpeed?: unknown }).animationSpeed
+    if (anim === 'Normal' || anim === 'Fast' || anim === 'Reduced Motion') {
+      setAnimationSpeed(anim)
+    }
+  }, [profile, user])
 
   const roleSpecific = useMemo(() => {
     if (!user || !profile) return null
@@ -56,8 +71,12 @@ export default function Settings() {
     return { label: 'Blood Type', value: p.bloodType }
   }, [profile, user])
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (!user || !profile) return
+    if (!token) {
+      toast.error('Please login again')
+      return
+    }
 
     const trimmedName = displayName.trim()
     const trimmedPhone = phone.trim()
@@ -71,35 +90,58 @@ export default function Settings() {
       return
     }
 
-    if (user.role === 'HOSPITAL') {
-      const p = profile as HospitalProfile
-      updateUser({
-        ...user,
-        profile: {
-          ...p,
-          hospitalName: trimmedName,
-          phone: trimmedPhone,
-        },
+    try {
+      const updated = await updateMyProfile({
+        token,
+        displayName: trimmedName,
+        phone: trimmedPhone,
       })
+      updateUser(updated)
       toast.success('Profile updated')
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Failed to update profile'
+      toast.error(message)
+    }
+  }
+
+  const handleSaveNotificationPreferences = async () => {
+    if (!user) return
+    if (!token) {
+      toast.error('Please login again')
       return
     }
 
-    const p = profile as DonorProfile
-    const parts = trimmedName.split(' ').filter(Boolean)
-    const firstName = parts[0] ?? p.firstName
-    const lastName = parts.slice(1).join(' ') || p.lastName
+    try {
+      const updated = await updateMyProfile({
+        token,
+        notifications,
+      })
+      updateUser(updated)
+      toast.success('Notification preferences saved')
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Failed to save notification preferences'
+      toast.error(message)
+    }
+  }
 
-    updateUser({
-      ...user,
-      profile: {
-        ...p,
-        firstName,
-        lastName,
-        phone: trimmedPhone,
-      },
-    })
-    toast.success('Profile updated')
+  const handleSaveDisplayPreferences = async () => {
+    if (!user) return
+    if (!token) {
+      toast.error('Please login again')
+      return
+    }
+
+    try {
+      const updated = await updateMyProfile({
+        token,
+        animationSpeed,
+      })
+      updateUser(updated)
+      toast.success('Display preferences saved')
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Failed to save display preferences'
+      toast.error(message)
+    }
   }
 
   return (
@@ -210,6 +252,12 @@ export default function Settings() {
                 </div>
               ))}
             </div>
+
+            <div className="mt-6">
+              <Button variant="outline" onClick={handleSaveNotificationPreferences}>
+                Save Notification Preferences
+              </Button>
+            </div>
           </Card>
 
           {/* Display Preferences */}
@@ -248,12 +296,22 @@ export default function Settings() {
                     <p className="text-sm text-gray-600">Control animation preferences</p>
                   </div>
                 </div>
-                <select className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none">
-                  <option>Normal</option>
-                  <option>Fast</option>
-                  <option>Reduced Motion</option>
+                <select
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  value={animationSpeed}
+                  onChange={(e) => setAnimationSpeed(e.target.value as typeof animationSpeed)}
+                >
+                  <option value="Normal">Normal</option>
+                  <option value="Fast">Fast</option>
+                  <option value="Reduced Motion">Reduced Motion</option>
                 </select>
               </div>
+            </div>
+
+            <div className="mt-6">
+              <Button variant="outline" onClick={handleSaveDisplayPreferences}>
+                Save Display Preferences
+              </Button>
             </div>
           </Card>
 
@@ -269,17 +327,66 @@ export default function Settings() {
               <div className="p-4 border border-gray-200 rounded-lg">
                 <p className="font-semibold text-medical-navy mb-2">Two-Factor Authentication</p>
                 <p className="text-sm text-gray-600 mb-4">Add an extra layer of security to your account</p>
-                <Button variant="outline">Enable 2FA</Button>
+                <Button variant="outline" onClick={() => toast('2FA setup coming soon')}>
+                  Enable 2FA
+                </Button>
               </div>
               <div className="p-4 border border-gray-200 rounded-lg">
                 <p className="font-semibold text-medical-navy mb-2">Data Export</p>
                 <p className="text-sm text-gray-600 mb-4">Download all your data in a portable format</p>
-                <Button variant="outline">Export Data</Button>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    if (!token) {
+                      toast.error('Please login again')
+                      return
+                    }
+
+                    try {
+                      const data = await exportMyData({ token })
+                      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `bloodflow_export_${new Date().toISOString().slice(0, 10)}.json`
+                      a.click()
+                      URL.revokeObjectURL(url)
+                      toast.success('Export downloaded')
+                    } catch (err) {
+                      const message = err instanceof ApiError ? err.message : 'Failed to export data'
+                      toast.error(message)
+                    }
+                  }}
+                >
+                  Export Data
+                </Button>
               </div>
               <div className="p-4 border border-red-200 bg-red-50 rounded-lg">
                 <p className="font-semibold text-red-700 mb-2">Delete Account</p>
                 <p className="text-sm text-red-600 mb-4">Permanently delete your account and all data</p>
-                <Button variant="danger" size="sm">Delete Account</Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={async () => {
+                    if (!token) {
+                      toast.error('Please login again')
+                      return
+                    }
+                    const ok = window.confirm('Delete your account permanently? This cannot be undone.')
+                    if (!ok) return
+
+                    try {
+                      await deleteMyAccount({ token })
+                      toast.success('Account deleted')
+                      logout()
+                    } catch (err) {
+                      const message = err instanceof ApiError ? err.message : 'Failed to delete account'
+                      toast.error(message)
+                    }
+                  }}
+                >
+                  Delete Account
+                </Button>
               </div>
             </div>
           </Card>

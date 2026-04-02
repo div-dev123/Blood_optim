@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import BloodUnitModel, UserModel
-from ..schemas import InventoryUnit, InventoryUnitCreateRequest
+from ..schemas import InventoryUnit, InventoryUnitCreateRequest, InventoryUnitUpdateRequest
 from ..security import decode_token
 
 
@@ -110,3 +110,60 @@ def create_unit(
     db.refresh(unit)
 
     return _to_inventory_unit(unit)
+
+
+@router.patch("/units/{unit_id}", response_model=InventoryUnit)
+def update_unit(
+    unit_id: str,
+    payload: InventoryUnitUpdateRequest,
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(default=None),
+):
+    user = _get_current_user(db=db, authorization=authorization)
+    if user.role != "HOSPITAL":
+        raise HTTPException(status_code=403, detail="Hospital access required")
+
+    unit = db.get(BloodUnitModel, unit_id)
+    if unit is None:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    profile = user.get_profile()
+    user_hospital_id = str(profile.get("hospitalId") or "")
+    if user_hospital_id and unit.hospital_id != user_hospital_id:
+        raise HTTPException(status_code=403, detail="Cannot modify other hospital inventory")
+
+    if payload.status is not None:
+        unit.status = payload.status
+    if payload.location is not None:
+        unit.location = payload.location
+    if payload.expiry_date is not None:
+        unit.expiry_date = payload.expiry_date
+
+    db.add(unit)
+    db.commit()
+    db.refresh(unit)
+    return _to_inventory_unit(unit)
+
+
+@router.delete("/units/{unit_id}")
+def delete_unit(
+    unit_id: str,
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(default=None),
+):
+    user = _get_current_user(db=db, authorization=authorization)
+    if user.role != "HOSPITAL":
+        raise HTTPException(status_code=403, detail="Hospital access required")
+
+    unit = db.get(BloodUnitModel, unit_id)
+    if unit is None:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    profile = user.get_profile()
+    user_hospital_id = str(profile.get("hospitalId") or "")
+    if user_hospital_id and unit.hospital_id != user_hospital_id:
+        raise HTTPException(status_code=403, detail="Cannot modify other hospital inventory")
+
+    db.delete(unit)
+    db.commit()
+    return {"status": "deleted"}

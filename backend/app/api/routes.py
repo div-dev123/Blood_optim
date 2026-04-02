@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from .auth import router as auth_router
 from .inventory import router as inventory_router
+from .redistribution import router as redistribution_router
 from ..schemas import (
     DemandForecastRequest,
     DemandForecastResponse,
@@ -17,6 +18,7 @@ router = APIRouter(prefix="/api/v1")
 
 router.include_router(auth_router)
 router.include_router(inventory_router)
+router.include_router(redistribution_router)
 
 
 @router.get("/health")

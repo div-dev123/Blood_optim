@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { CheckCircle } from 'lucide-react'
+import { toast } from 'react-hot-toast'
 import Navbar from '../../components/common/Navbar'
 import Sidebar from '../../components/hospital/Sidebar'
 import Card from '../../components/common/Card'
@@ -9,51 +10,85 @@ import { BloodType } from '../../types'
 import { getBloodTypeColor } from '../../utils/bloodTypeUtils'
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer } from 'recharts'
 
-const mockMatches = [
-  {
-    unitId: 'BU-2026-001234',
-    bloodType: 'O+' as BloodType,
-    overallScore: 95,
-    freshnessScore: 98,
-    antigenScore: 92,
-    proximityScore: 96,
-    rank: 1,
-    location: 'Blood Bank A',
-    expiryDate: '2026-03-15',
-  },
-  {
-    unitId: 'BU-2026-001235',
-    bloodType: 'O+' as BloodType,
-    overallScore: 88,
-    freshnessScore: 85,
-    antigenScore: 90,
-    proximityScore: 89,
-    rank: 2,
-    location: 'Blood Bank B',
-    expiryDate: '2026-03-16',
-  },
-  {
-    unitId: 'BU-2026-001238',
-    bloodType: 'O-' as BloodType,
-    overallScore: 92,
-    freshnessScore: 95,
-    antigenScore: 88,
-    proximityScore: 93,
-    rank: 3,
-    location: 'Blood Bank A',
-    expiryDate: '2026-03-09',
-  },
-]
+import { useAuth } from '../../hooks/useAuth'
+import { ApiError } from '../../utils/apiClient'
+import { listInventoryUnits, updateInventoryUnit } from '../../api/inventory'
+import { addActivity } from '../../utils/activityLog'
+
+type MatchRow = {
+  unitId: string
+  bloodType: BloodType
+  overallScore: number
+  freshnessScore: number
+  antigenScore: number
+  proximityScore: number
+  rank: number
+  location: string
+  expiryDate: string
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function daysUntil(dateIso: string): number {
+  const d = new Date(dateIso)
+  const today = new Date()
+  const diff = d.getTime() - today.getTime()
+  return Math.ceil(diff / (1000 * 60 * 60 * 24))
+}
+
+const RECIPIENT_TO_ALLOWED_DONORS: Record<BloodType, BloodType[]> = {
+  'O-': ['O-'],
+  'O+': ['O+', 'O-'],
+  'A-': ['A-', 'O-'],
+  'A+': ['A+', 'A-', 'O+', 'O-'],
+  'B-': ['B-', 'O-'],
+  'B+': ['B+', 'B-', 'O+', 'O-'],
+  'AB-': ['AB-', 'A-', 'B-', 'O-'],
+  'AB+': ['AB+', 'AB-', 'A+', 'A-', 'B+', 'B-', 'O+', 'O-'],
+}
+
+function isCompatible(donor: BloodType, recipient: BloodType): boolean {
+  return RECIPIENT_TO_ALLOWED_DONORS[recipient].includes(donor)
+}
+
+function antigenScore(donor: BloodType, recipient: BloodType): number {
+  if (donor === recipient) return 100
+  const sameAbo = donor.replace(/[+-]/, '') === recipient.replace(/[+-]/, '')
+  const rhOk = recipient.endsWith('+') ? true : donor.endsWith('-')
+  if (sameAbo && rhOk) return 92
+  if (isCompatible(donor, recipient)) return 85
+  return 0
+}
 
 export default function MatchScore() {
+  const { user, token } = useAuth()
+
+  const hospitalId = useMemo(() => {
+    if (
+      user?.role === 'HOSPITAL' &&
+      user.profile &&
+      typeof (user.profile as { hospitalId?: unknown }).hospitalId === 'string'
+    ) {
+      return (user.profile as { hospitalId: string }).hospitalId
+    }
+    return 'H001'
+  }, [user])
+
   const [patientBloodType, setPatientBloodType] = useState<BloodType>('O+')
   const [selectedMatch, setSelectedMatch] = useState<number>(0)
+  const [matches, setMatches] = useState<MatchRow[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const selected = matches[selectedMatch]
 
   const radarData = [
-    { subject: 'Freshness', A: mockMatches[selectedMatch]?.freshnessScore || 0, fullMark: 100 },
-    { subject: 'Antigens', A: mockMatches[selectedMatch]?.antigenScore || 0, fullMark: 100 },
-    { subject: 'Proximity', A: mockMatches[selectedMatch]?.proximityScore || 0, fullMark: 100 },
-    { subject: 'Overall', A: mockMatches[selectedMatch]?.overallScore || 0, fullMark: 100 },
+    { subject: 'Freshness', A: selected?.freshnessScore || 0, fullMark: 100 },
+    { subject: 'Antigens', A: selected?.antigenScore || 0, fullMark: 100 },
+    { subject: 'Proximity', A: selected?.proximityScore || 0, fullMark: 100 },
+    { subject: 'Overall', A: selected?.overallScore || 0, fullMark: 100 },
   ]
 
   const bloodTypes: BloodType[] = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
@@ -116,7 +151,75 @@ export default function MatchScore() {
               </div>
             </div>
             <div className="mt-6">
-              <Button>Find Matches</Button>
+              <Button
+                isLoading={loading}
+                onClick={async () => {
+                  const authToken = token
+                  if (!authToken) {
+                    toast.error('Please login again')
+                    return
+                  }
+
+                  setLoading(true)
+                  setError(null)
+                  setSelectedMatch(0)
+                  try {
+                    const units = await listInventoryUnits({ hospitalId, token: authToken })
+
+                    const computed: MatchRow[] = units
+                      .filter((u) => u.status === 'available')
+                      .filter((u) => daysUntil(u.expiryDate) >= 0)
+                      .filter((u) => isCompatible(u.bloodType, patientBloodType))
+                      .map((u) => {
+                        const daysLeft = daysUntil(u.expiryDate)
+                        const freshness = clamp((daysLeft / 42) * 100, 0, 100)
+                        const ant = antigenScore(u.bloodType, patientBloodType)
+                        const prox = u.location.toLowerCase().includes('main') ? 92 : 80
+                        const overall = clamp(Math.round(0.4 * freshness + 0.4 * ant + 0.2 * prox), 0, 100)
+                        return {
+                          unitId: u.id,
+                          bloodType: u.bloodType,
+                          overallScore: overall,
+                          freshnessScore: Math.round(freshness),
+                          antigenScore: Math.round(ant),
+                          proximityScore: Math.round(prox),
+                          rank: 0,
+                          location: u.location,
+                          expiryDate: u.expiryDate,
+                        }
+                      })
+                      .sort((a, b) => {
+                        if (b.overallScore !== a.overallScore) return b.overallScore - a.overallScore
+                        if (b.antigenScore !== a.antigenScore) return b.antigenScore - a.antigenScore
+                        return b.freshnessScore - a.freshnessScore
+                      })
+                      .map((row, idx) => ({ ...row, rank: idx + 1 }))
+
+                    setMatches(computed)
+                    if (computed.length === 0) {
+                      setError('No compatible available units found in your inventory')
+                      addActivity({
+                        kind: 'warning',
+                        action: 'Match Search',
+                        details: `No matches for ${patientBloodType}`,
+                      })
+                    } else {
+                      addActivity({
+                        kind: 'info',
+                        action: 'Match Search',
+                        details: `${computed.length} matches for ${patientBloodType}`,
+                      })
+                    }
+                  } catch (err) {
+                    const message = err instanceof ApiError ? err.message : 'Failed to load inventory matches'
+                    setError(message)
+                  } finally {
+                    setLoading(false)
+                  }
+                }}
+              >
+                Find Matches
+              </Button>
             </div>
           </Card>
 
@@ -124,7 +227,15 @@ export default function MatchScore() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             {/* Match Cards */}
             <div className="lg:col-span-2 space-y-4">
-              {mockMatches.map((match, index) => (
+              {error ? (
+                <Card className="border border-gray-200">
+                  <p className="text-sm text-gray-700">
+                    <span className="font-semibold text-medical-navy">Match note:</span> {error}
+                  </p>
+                </Card>
+              ) : null}
+
+              {matches.map((match, index) => (
                 <motion.div
                   key={match.unitId}
                   initial={{ opacity: 0, x: -20 }}
@@ -235,7 +346,9 @@ export default function MatchScore() {
                   <span className="font-semibold">Recommended Match</span>
                 </div>
                 <p className="text-sm text-green-600">
-                  This unit has the highest compatibility score and is recommended for the patient.
+                  {selected
+                    ? `Unit ${selected.unitId} is currently the best match.`
+                    : 'Run a match search to see recommendations.'}
                 </p>
               </div>
             </Card>
@@ -260,7 +373,7 @@ export default function MatchScore() {
                   </tr>
                 </thead>
                 <tbody>
-                  {mockMatches.map((match) => (
+                  {matches.map((match) => (
                     <tr
                       key={match.unitId}
                       className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
@@ -289,7 +402,36 @@ export default function MatchScore() {
                       <td className="py-3 px-4">{match.antigenScore}%</td>
                       <td className="py-3 px-4">{match.proximityScore}%</td>
                       <td className="py-3 px-4">
-                        <Button size="sm" variant="outline">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            const authToken = token
+                            if (!authToken) {
+                              toast.error('Please login again')
+                              return
+                            }
+
+                            try {
+                              await updateInventoryUnit({
+                                token: authToken,
+                                unitId: match.unitId,
+                                status: 'reserved',
+                              })
+                              setMatches((prev) => prev.filter((m) => m.unitId !== match.unitId))
+                              setSelectedMatch(0)
+                              addActivity({
+                                kind: 'success',
+                                action: 'Unit Reserved',
+                                details: `${match.bloodType} • ${match.unitId}`,
+                              })
+                              toast.success('Unit reserved')
+                            } catch (err) {
+                              const message = err instanceof ApiError ? err.message : 'Failed to reserve unit'
+                              toast.error(message)
+                            }
+                          }}
+                        >
                           Reserve
                         </Button>
                       </td>

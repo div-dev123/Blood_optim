@@ -9,9 +9,15 @@ import Button from '../../components/common/Button'
 import { BloodUnit, BloodType } from '../../types'
 import { getBloodTypeColor, calculateDaysUntilExpiry } from '../../utils/bloodTypeUtils'
 import { formatDate } from '../../utils/dateHelpers'
-import { createInventoryUnit, listInventoryUnits } from '../../api/inventory'
+import {
+  createInventoryUnit,
+  deleteInventoryUnit,
+  listInventoryUnits,
+  updateInventoryUnit,
+} from '../../api/inventory'
 import { useAuth } from '../../hooks/useAuth'
 import { ApiError } from '../../utils/apiClient'
+import { addActivity } from '../../utils/activityLog'
 
 export default function Inventory() {
   const { user, token } = useAuth()
@@ -21,6 +27,7 @@ export default function Inventory() {
   const [viewMode] = useState<'table' | 'grid'>('table')
   const [units, setUnits] = useState<BloodUnit[]>([])
   const [loading, setLoading] = useState(false)
+  const [addLoading, setAddLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const hospitalId = useMemo(() => {
@@ -40,6 +47,7 @@ export default function Inventory() {
     collectionDate: new Date().toISOString().slice(0, 10),
     expiryDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 28).toISOString().slice(0, 10),
     location: 'Main Storage',
+    quantity: 1,
   })
 
   useEffect(() => {
@@ -93,7 +101,30 @@ export default function Inventory() {
               Inventory Management
             </h1>
             <div className="flex gap-4">
-              <Button variant="outline">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const payload = {
+                    exportedAt: new Date().toISOString(),
+                    hospitalId,
+                    units: filteredUnits,
+                  }
+                  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+                    type: 'application/json',
+                  })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `inventory_${hospitalId}_${new Date().toISOString().slice(0, 10)}.json`
+                  a.click()
+                  URL.revokeObjectURL(url)
+                  addActivity({
+                    kind: 'info',
+                    action: 'Inventory Exported',
+                    details: `${filteredUnits.length} units`,
+                  })
+                }}
+              >
                 <Download className="mr-2 inline" />
                 Export
               </Button>
@@ -106,7 +137,7 @@ export default function Inventory() {
 
           {showAddUnit && (
             <Card className="mb-6">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Blood Type</label>
                   <select
@@ -154,9 +185,22 @@ export default function Inventory() {
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Quantity</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={newUnit.quantity}
+                    onChange={(e) => setNewUnit((s) => ({ ...s, quantity: Math.max(1, Number(e.target.value || 1)) }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  />
+                </div>
+
+                <div>
                   <Button
                     className="w-full"
-                    disabled={!token || loading}
+                    isLoading={addLoading}
+                    disabled={!token || loading || addLoading}
                     onClick={async () => {
                       const authToken = token
                       if (!authToken) {
@@ -164,21 +208,64 @@ export default function Inventory() {
                         return
                       }
 
+                      const qty = Math.max(1, Math.floor(Number(newUnit.quantity || 1)))
+                      if (qty > 100) {
+                        toast.error('Quantity is too large (max 100)')
+                        return
+                      }
+
                       try {
-                        const created = await createInventoryUnit({
-                          token: authToken,
-                          hospitalId,
-                          bloodType: newUnit.bloodType,
-                          collectionDate: newUnit.collectionDate,
-                          expiryDate: newUnit.expiryDate,
-                          location: newUnit.location,
-                        })
-                        setUnits((prev) => [created, ...prev])
-                        toast.success('Blood unit added')
-                        setShowAddUnit(false)
+                        setAddLoading(true)
+
+                        const createdUnits: BloodUnit[] = []
+                        let lastError: unknown = null
+                        for (let i = 0; i < qty; i += 1) {
+                          try {
+                            // Sequential to avoid hammering SQLite + keep error handling simple.
+                            const created = await createInventoryUnit({
+                              token: authToken,
+                              hospitalId,
+                              bloodType: newUnit.bloodType,
+                              collectionDate: newUnit.collectionDate,
+                              expiryDate: newUnit.expiryDate,
+                              location: newUnit.location,
+                            })
+                            createdUnits.push(created)
+                          } catch (e) {
+                            lastError = e
+                            break
+                          }
+                        }
+
+                        if (createdUnits.length > 0) {
+                          setUnits((prev) => [...createdUnits, ...prev])
+                        }
+
+                        if (createdUnits.length === qty) {
+                          addActivity({
+                            kind: 'success',
+                            action: 'Unit Added',
+                            details: `${newUnit.bloodType} • ${newUnit.location} • x${qty}`,
+                          })
+                          toast.success(qty === 1 ? 'Blood unit added' : `Added ${qty} units`)
+                          setShowAddUnit(false)
+                        } else {
+                          addActivity({
+                            kind: 'warning',
+                            action: 'Unit Added (Partial)',
+                            details: `${newUnit.bloodType} • ${newUnit.location} • x${createdUnits.length}/${qty}`,
+                          })
+                          const msg =
+                            lastError instanceof ApiError
+                              ? lastError.message
+                              : 'Some units failed to add'
+                          toast.error(`${msg} (added ${createdUnits.length}/${qty})`)
+                        }
                       } catch (err) {
                         const message = err instanceof ApiError ? err.message : 'Failed to add unit'
                         toast.error(message)
+                      } finally {
+                        setAddLoading(false)
                       }
                     }}
                   >
@@ -305,9 +392,80 @@ export default function Inventory() {
                             </div>
                           </td>
                           <td className="py-3 px-4">
-                            <button className="p-2 hover:bg-gray-100 rounded transition-colors">
-                              <QrCode className="h-4 w-4 text-medical-navy" />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={unit.status}
+                                onChange={async (e) => {
+                                  const authToken = token
+                                  if (!authToken) {
+                                    toast.error('Please login again')
+                                    return
+                                  }
+                                  const nextStatus = e.target.value as
+                                    | 'available'
+                                    | 'reserved'
+                                    | 'expired'
+                                    | 'dispatched'
+
+                                  try {
+                                    const updated = await updateInventoryUnit({
+                                      token: authToken,
+                                      unitId: unit.id,
+                                      status: nextStatus,
+                                    })
+                                    setUnits((prev) => prev.map((u) => (u.id === unit.id ? updated : u)))
+                                    addActivity({
+                                      kind: 'info',
+                                      action: 'Status Updated',
+                                      details: `${updated.bloodType} → ${updated.status}`,
+                                    })
+                                    toast.success('Status updated')
+                                  } catch (err) {
+                                    const message = err instanceof ApiError ? err.message : 'Failed to update status'
+                                    toast.error(message)
+                                  }
+                                }}
+                                className="px-2 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-vital-crimson outline-none"
+                              >
+                                <option value="available">available</option>
+                                <option value="reserved">reserved</option>
+                                <option value="dispatched">dispatched</option>
+                                <option value="expired">expired</option>
+                              </select>
+
+                              <button
+                                className="p-2 hover:bg-gray-100 rounded transition-colors"
+                                title="QR"
+                              >
+                                <QrCode className="h-4 w-4 text-medical-navy" />
+                              </button>
+
+                              <button
+                                className="px-3 py-2 text-xs font-semibold rounded-lg border-2 border-vital-crimson text-vital-crimson hover:bg-vital-crimson hover:text-white transition-colors"
+                                onClick={async () => {
+                                  const authToken = token
+                                  if (!authToken) {
+                                    toast.error('Please login again')
+                                    return
+                                  }
+                                  try {
+                                    await deleteInventoryUnit({ token: authToken, unitId: unit.id })
+                                    setUnits((prev) => prev.filter((u) => u.id !== unit.id))
+                                    addActivity({
+                                      kind: 'warning',
+                                      action: 'Unit Removed',
+                                      details: `${unit.bloodType} • ${unit.location}`,
+                                    })
+                                    toast.success('Unit removed')
+                                  } catch (err) {
+                                    const message = err instanceof ApiError ? err.message : 'Failed to delete unit'
+                                    toast.error(message)
+                                  }
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </td>
                         </motion.tr>
                       )

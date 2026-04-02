@@ -1,5 +1,5 @@
 import type { BloodType, BloodUnit } from '../types'
-import { apiGetAuth, apiPostAuth } from '../utils/apiClient'
+import { apiDeleteAuth, apiGetAuth, apiPatchAuth, apiPostAuth } from '../utils/apiClient'
 
 export async function listInventoryUnits(payload: {
   hospitalId: string
@@ -30,6 +30,38 @@ export async function createInventoryUnit(payload: {
       expiry_date: payload.expiryDate,
       location: payload.location,
     },
+    payload.token,
+    { signal: payload.signal },
+  )
+}
+
+export async function updateInventoryUnit(payload: {
+  token: string
+  unitId: string
+  status?: 'available' | 'reserved' | 'expired' | 'dispatched'
+  location?: string
+  expiryDate?: string
+  signal?: AbortSignal
+}): Promise<BloodUnit> {
+  return await apiPatchAuth<BloodUnit>(
+    `/api/v1/inventory/units/${encodeURIComponent(payload.unitId)}`,
+    {
+      status: payload.status,
+      location: payload.location,
+      expiry_date: payload.expiryDate,
+    },
+    payload.token,
+    { signal: payload.signal },
+  )
+}
+
+export async function deleteInventoryUnit(payload: {
+  token: string
+  unitId: string
+  signal?: AbortSignal
+}): Promise<{ status: string } | void> {
+  return await apiDeleteAuth<{ status: string }>(
+    `/api/v1/inventory/units/${encodeURIComponent(payload.unitId)}`,
     payload.token,
     { signal: payload.signal },
   )

@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { MapPin, Truck, Clock, AlertCircle } from 'lucide-react'
+import { toast } from 'react-hot-toast'
 import Navbar from '../../components/common/Navbar'
 import Sidebar from '../../components/hospital/Sidebar'
 import Card from '../../components/common/Card'
@@ -8,37 +9,16 @@ import Button from '../../components/common/Button'
 import { Redistribution as RedistributionType, BloodType } from '../../types'
 import { getBloodTypeColor } from '../../utils/bloodTypeUtils'
 
-const mockRedistributions: RedistributionType[] = [
-  {
-    id: 'R-001',
-    fromLocation: 'Blood Bank A',
-    toLocation: 'Hospital Central',
-    bloodTypes: ['O+', 'A+'],
-    units: 45,
-    status: 'approved',
-    urgency: 'high',
-    eta: '2 hours',
-  },
-  {
-    id: 'R-002',
-    fromLocation: 'Blood Bank B',
-    toLocation: 'Emergency Center',
-    bloodTypes: ['B+'],
-    units: 20,
-    status: 'in-transit',
-    urgency: 'critical',
-    eta: '30 minutes',
-  },
-  {
-    id: 'R-003',
-    fromLocation: 'Blood Bank C',
-    toLocation: 'Regional Hospital',
-    bloodTypes: ['AB+', 'O-'],
-    units: 32,
-    status: 'requested',
-    urgency: 'medium',
-  },
-]
+import { useAuth } from '../../hooks/useAuth'
+import { ApiError } from '../../utils/apiClient'
+import {
+  advanceRedistributionRequest,
+  createRedistributionRequest,
+  getRedistributionRecommendations,
+  listRedistributionRequests,
+  type RedistributionRecommendation,
+} from '../../api/redistribution'
+import { addActivity } from '../../utils/activityLog'
 
 const statusColors = {
   requested: 'bg-plasma-gold bg-opacity-20 text-plasma-gold',
@@ -48,8 +28,53 @@ const statusColors = {
 }
 
 export default function Redistribution() {
-  const [redistributions] = useState<RedistributionType[]>(mockRedistributions)
+  const { user, token } = useAuth()
+
+  const hospitalId = useMemo(() => {
+    if (
+      user?.role === 'HOSPITAL' &&
+      user.profile &&
+      typeof (user.profile as { hospitalId?: unknown }).hospitalId === 'string'
+    ) {
+      return (user.profile as { hospitalId: string }).hospitalId
+    }
+    return 'H001'
+  }, [user])
+
+  const [redistributions, setRedistributions] = useState<RedistributionType[]>([])
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const [showOptimize, setShowOptimize] = useState(false)
+  const [optBloodType, setOptBloodType] = useState<BloodType>('O+')
+  const [optUnits, setOptUnits] = useState(10)
+  const [recommendations, setRecommendations] = useState<RedistributionRecommendation[]>([])
+  const [optLoading, setOptLoading] = useState(false)
+  const [optHasRun, setOptHasRun] = useState(false)
+
+  useEffect(() => {
+    if (!token) return
+    const controller = new AbortController()
+
+    async function load(authToken: string) {
+      setLoading(true)
+      setError(null)
+      try {
+        const rows = await listRedistributionRequests({ token: authToken, signal: controller.signal })
+        setRedistributions(rows as unknown as RedistributionType[])
+      } catch (err) {
+        if ((err as { name?: string }).name === 'AbortError') return
+        const message = err instanceof ApiError ? err.message : 'Failed to load redistributions'
+        setError(message)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load(token)
+    return () => controller.abort()
+  }, [token])
 
   const filtered = selectedStatus === 'all'
     ? redistributions
@@ -71,10 +96,137 @@ export default function Redistribution() {
               </h1>
               <p className="text-gray-600">Optimize blood movement between locations (RL coming soon)</p>
             </div>
-            <Button disabled>
-              Optimize Routes (RL coming soon)
+            <Button
+              onClick={() => setShowOptimize((v) => !v)}
+              variant={showOptimize ? 'outline' : 'primary'}
+            >
+              {showOptimize ? 'Hide Optimizer' : 'Optimize Routes'}
             </Button>
           </div>
+
+          {showOptimize && (
+            <Card className="mb-6">
+              <h3 className="font-heading text-xl font-semibold text-medical-navy mb-4">
+                Route Optimizer (Heuristic)
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Blood Type</label>
+                  <select
+                    value={optBloodType}
+                    onChange={(e) => setOptBloodType(e.target.value as BloodType)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  >
+                    {(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as BloodType[]).map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Needed Units</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={optUnits}
+                    onChange={(e) => setOptUnits(Math.max(1, Number(e.target.value || 1)))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  />
+                </div>
+                <div>
+                  <Button
+                    isLoading={optLoading}
+                    onClick={async () => {
+                      const authToken = token
+                      if (!authToken) {
+                        toast.error('Please login again')
+                        return
+                      }
+                      setOptLoading(true)
+                      try {
+                        const recs = await getRedistributionRecommendations({
+                          token: authToken,
+                          bloodType: optBloodType,
+                          neededUnits: optUnits,
+                        })
+                        setRecommendations(recs)
+                        setOptHasRun(true)
+                        addActivity({
+                          kind: 'info',
+                          action: 'Optimizer Run',
+                          details: `${optBloodType} • ${recs.length} candidate routes`,
+                        })
+                      } catch (err) {
+                        const message = err instanceof ApiError ? err.message : 'Failed to load recommendations'
+                        toast.error(message)
+                      } finally {
+                        setOptLoading(false)
+                      }
+                    }}
+                  >
+                    Get Recommendations
+                  </Button>
+                </div>
+              </div>
+
+              {recommendations.length > 0 ? (
+                <div className="mt-6 space-y-3">
+                  {recommendations.map((r) => (
+                    <div key={`${r.from_hospital_id}-${r.blood_type}`} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-medical-navy">
+                          {r.from_hospital_id} → {r.to_hospital_id} • {r.blood_type}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          {r.units} units • ETA {r.eta} • {r.reason}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          const authToken = token
+                          if (!authToken) {
+                            toast.error('Please login again')
+                            return
+                          }
+
+                          try {
+                            const created = await createRedistributionRequest({
+                              token: authToken,
+                              fromHospitalId: r.from_hospital_id,
+                              toHospitalId: hospitalId,
+                              bloodTypes: [r.blood_type],
+                              units: r.units,
+                              urgency: 'high',
+                            })
+                            setRedistributions((prev) => [created as unknown as RedistributionType, ...prev])
+                            toast.success('Request created')
+                            addActivity({
+                              kind: 'success',
+                              action: 'Redistribution Requested',
+                              details: `${r.blood_type} • ${r.units} units`,
+                            })
+                          } catch (err) {
+                            const message = err instanceof ApiError ? err.message : 'Failed to create request'
+                            toast.error(message)
+                          }
+                        }}
+                      >
+                        Create
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-gray-600">
+                  {optHasRun
+                    ? `No candidate routes found for ${hospitalId}.`
+                    : 'No recommendations loaded yet.'}
+                </p>
+              )}
+            </Card>
+          )}
 
           {/* Status Filter */}
           <Card className="mb-6">
@@ -111,6 +263,8 @@ export default function Redistribution() {
                       {status.replace('-', ' ')} ({statusItems.length})
                     </h3>
                     <div className="space-y-4">
+                      {loading ? <p className="text-sm text-gray-600">Loading…</p> : null}
+                      {error ? <p className="text-sm text-gray-600">{error}</p> : null}
                       {statusItems.map((item, index) => (
                         <motion.div
                           key={item.id}
@@ -161,6 +315,40 @@ export default function Redistribution() {
                               Critical urgency
                             </div>
                           )}
+
+                          <div className="mt-3">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={async () => {
+                                const authToken = token
+                                if (!authToken) {
+                                  toast.error('Please login again')
+                                  return
+                                }
+                                try {
+                                  const updated = await advanceRedistributionRequest({
+                                    token: authToken,
+                                    requestId: item.id,
+                                  })
+                                  setRedistributions((prev) =>
+                                    prev.map((r) => (r.id === item.id ? (updated as unknown as RedistributionType) : r)),
+                                  )
+                                  toast.success('Status updated')
+                                  addActivity({
+                                    kind: 'info',
+                                    action: 'Redistribution Updated',
+                                    details: `${updated.id} → ${updated.status}`,
+                                  })
+                                } catch (err) {
+                                  const message = err instanceof ApiError ? err.message : 'Failed to update request'
+                                  toast.error(message)
+                                }
+                              }}
+                            >
+                              Advance Status
+                            </Button>
+                          </div>
                         </motion.div>
                       ))}
                     </div>

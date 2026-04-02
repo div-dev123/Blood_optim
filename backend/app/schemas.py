@@ -36,6 +36,13 @@ class AuthResponse(BaseModel):
     user: AuthUser
 
 
+class AuthUpdateProfileRequest(BaseModel):
+    display_name: Optional[str] = None
+    phone: Optional[str] = None
+    notifications: Optional[dict] = None
+    animation_speed: Optional[str] = Field(None, pattern="^(Normal|Fast|Reduced Motion)$")
+
+
 class InventoryUnitCreateRequest(BaseModel):
     hospital_id: str = Field(..., min_length=1)
     blood_type: str = Field(..., min_length=1)
@@ -53,6 +60,40 @@ class InventoryUnit(BaseModel):
     status: str
     location: str
     matchScore: int
+
+
+class InventoryUnitUpdateRequest(BaseModel):
+    status: Optional[str] = Field(None, pattern="^(available|reserved|expired|dispatched)$")
+    location: Optional[str] = Field(None, min_length=1)
+    expiry_date: Optional[str] = Field(None, min_length=10, max_length=10)
+
+
+class RedistributionRequestCreate(BaseModel):
+    from_hospital_id: str = Field(..., min_length=1)
+    to_hospital_id: str = Field(..., min_length=1)
+    blood_types: List[str] = Field(..., min_length=1)
+    units: int = Field(..., ge=1)
+    urgency: str = Field("medium", pattern="^(low|medium|high|critical)$")
+
+
+class RedistributionRequest(BaseModel):
+    id: str
+    fromLocation: str
+    toLocation: str
+    bloodTypes: List[str]
+    units: int
+    status: str
+    urgency: str
+    eta: Optional[str] = None
+
+
+class RedistributionRecommendation(BaseModel):
+    from_hospital_id: str
+    to_hospital_id: str
+    blood_type: str
+    units: int
+    reason: str
+    eta: str
 
 
 class DemandForecastRequest(BaseModel):

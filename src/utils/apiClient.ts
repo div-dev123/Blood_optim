@@ -145,3 +145,60 @@ export async function apiPostAuth<T>(
 
   return (await res.json()) as T
 }
+
+export async function apiPatchAuth<T>(
+  path: string,
+  body: unknown,
+  token: string,
+  options?: { signal?: AbortSignal },
+): Promise<T> {
+  const url = joinUrl(API_BASE_URL, path)
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    signal: options?.signal,
+  })
+
+  if (!res.ok) {
+    const errBody = await parseErrorBody(res)
+    const message = extractDetail(errBody) ?? `${res.status} ${res.statusText}`
+    throw new ApiError(message, res.status, errBody)
+  }
+
+  return (await res.json()) as T
+}
+
+export async function apiDeleteAuth<T>(
+  path: string,
+  token: string,
+  options?: { signal?: AbortSignal },
+): Promise<T> {
+  const url = joinUrl(API_BASE_URL, path)
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    signal: options?.signal,
+  })
+
+  if (!res.ok) {
+    const errBody = await parseErrorBody(res)
+    const message = extractDetail(errBody) ?? `${res.status} ${res.statusText}`
+    throw new ApiError(message, res.status, errBody)
+  }
+
+  const contentType = res.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json')) {
+    return (await res.json()) as T
+  }
+
+  // @ts-expect-error - allow void return for endpoints that don't return JSON
+  return undefined
+}

@@ -6,19 +6,20 @@ import Card from '../../components/common/Card'
 import Button from '../../components/common/Button'
 import { BloodType } from '../../types'
 import { getBloodTypeColor } from '../../utils/bloodTypeUtils'
+import { toast } from 'react-hot-toast'
+import { useAuth } from '../../hooks/useAuth'
 
-const mockDonations = [
-  { date: '2026-01-15', location: 'Blood Bank A', units: 1 },
-  { date: '2025-11-20', location: 'Mobile Camp', units: 1 },
-  { date: '2025-09-10', location: 'Blood Bank B', units: 1 },
-]
+type DonationRecord = {
+  id: string
+  date: string // YYYY-MM-DD
+  location: string
+  units: number
+  source: 'camp' | 'manual'
+  campId?: string
+  createdAt: string
+}
 
-const mockAchievements = [
-  { name: 'First Donation', icon: Heart, unlocked: true, date: '2025-09-10' },
-  { name: '5 Donations', icon: Award, unlocked: true, date: '2026-01-15' },
-  { name: '10 Donations', icon: Target, unlocked: false },
-  { name: 'Lifesaver', icon: Gift, unlocked: false },
-]
+const DONATIONS_KEY = 'donor.donations.v1'
 
 const nearbyOpportunities = [
   { name: 'Blood Bank Central', distance: '2.3 km', need: 'Critical', bloodTypes: ['O+', 'A+'], impact: 95 },
@@ -70,11 +71,72 @@ const upcomingCamps: BloodCamp[] = [
   },
 ]
 
+function parseDonationRecords(raw: unknown): DonationRecord[] {
+  if (!Array.isArray(raw)) return []
+  const out: DonationRecord[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const v = item as Partial<DonationRecord>
+    if (typeof v.id !== 'string') continue
+    if (typeof v.date !== 'string') continue
+    if (typeof v.location !== 'string') continue
+    if (typeof v.units !== 'number') continue
+    if (v.source !== 'camp' && v.source !== 'manual') continue
+    if (typeof v.createdAt !== 'string') continue
+    out.push({
+      id: v.id,
+      date: v.date,
+      location: v.location,
+      units: v.units,
+      source: v.source,
+      campId: typeof v.campId === 'string' ? v.campId : undefined,
+      createdAt: v.createdAt,
+    })
+  }
+  return out
+}
+
+function loadDonations(): DonationRecord[] {
+  try {
+    const raw = localStorage.getItem(DONATIONS_KEY)
+    if (!raw) return []
+    return parseDonationRecords(JSON.parse(raw))
+  } catch {
+    return []
+  }
+}
+
+function saveDonations(donations: DonationRecord[]) {
+  try {
+    localStorage.setItem(DONATIONS_KEY, JSON.stringify(donations))
+  } catch {
+    // ignore
+  }
+}
+
+function addDays(dateIso: string, days: number): string {
+  const d = new Date(dateIso)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+function daysBetween(startIso: string, endIso: string): number {
+  const a = new Date(startIso)
+  const b = new Date(endIso)
+  return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
 export default function DonorHome() {
-  const [creditScore] = useState(850)
-  const [totalDonations] = useState(5)
-  const [livesTouched] = useState(15)
-  const [nextEligible] = useState('2026-03-15')
+  const { user } = useAuth()
+
+  const [donations, setDonations] = useState<DonationRecord[]>(() => loadDonations())
+  const [manualDate, setManualDate] = useState(() => todayIso())
+  const [manualLocation, setManualLocation] = useState('')
+  const [manualUnits, setManualUnits] = useState(1)
 
   const [registeredCampIds, setRegisteredCampIds] = useState<string[]>([])
 
@@ -91,6 +153,50 @@ export default function DonorHome() {
 
   const registeredSet = useMemo(() => new Set(registeredCampIds), [registeredCampIds])
 
+  const donationByCampId = useMemo(() => {
+    const map = new Map<string, DonationRecord>()
+    for (const d of donations) {
+      if (d.campId) map.set(d.campId, d)
+    }
+    return map
+  }, [donations])
+
+  const sortedDonations = useMemo(() => {
+    return [...donations].sort((a, b) => b.date.localeCompare(a.date))
+  }, [donations])
+
+  const totalDonations = useMemo(() => sortedDonations.length, [sortedDonations.length])
+  const totalUnits = useMemo(() => sortedDonations.reduce((sum, d) => sum + d.units, 0), [sortedDonations])
+  const livesTouched = useMemo(() => totalUnits * 3, [totalUnits])
+
+  const lastDonationDate = useMemo(() => sortedDonations[0]?.date ?? null, [sortedDonations])
+  const nextEligible = useMemo(() => {
+    if (!lastDonationDate) return null
+    // Typical whole blood donation interval: 56 days
+    return addDays(lastDonationDate, 56)
+  }, [lastDonationDate])
+
+  const creditScore = useMemo(() => {
+    const base = 700
+    const donationBoost = Math.min(150, totalDonations * 18)
+    const recencyBoost = lastDonationDate ? Math.max(0, 40 - Math.min(40, daysBetween(lastDonationDate, todayIso()))) : 0
+    return Math.min(900, Math.round(base + donationBoost + recencyBoost))
+  }, [lastDonationDate, totalDonations])
+
+  const achievements = useMemo(() => {
+    const first = sortedDonations[sortedDonations.length - 1]?.date
+    const fifth = totalDonations >= 5 ? sortedDonations[sortedDonations.length - 5]?.date : undefined
+    const tenth = totalDonations >= 10 ? sortedDonations[sortedDonations.length - 10]?.date : undefined
+    const lifesaver = livesTouched >= 30 ? sortedDonations[0]?.date : undefined
+
+    return [
+      { name: 'First Donation', icon: Heart, unlocked: Boolean(first), date: first },
+      { name: '5 Donations', icon: Award, unlocked: totalDonations >= 5, date: fifth },
+      { name: '10 Donations', icon: Target, unlocked: totalDonations >= 10, date: tenth },
+      { name: 'Lifesaver', icon: Gift, unlocked: livesTouched >= 30, date: lifesaver },
+    ]
+  }, [livesTouched, sortedDonations, totalDonations])
+
   function toggleRegistration(campId: string) {
     setRegisteredCampIds((prev) => {
       const next = prev.includes(campId) ? prev.filter((id) => id !== campId) : [campId, ...prev]
@@ -101,6 +207,54 @@ export default function DonorHome() {
       }
       return next
     })
+  }
+
+  function addDonation(record: Omit<DonationRecord, 'id' | 'createdAt'>) {
+    const next: DonationRecord = {
+      ...record,
+      id: `don_${Math.random().toString(16).slice(2)}_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    }
+    setDonations((prev) => {
+      const updated = [next, ...prev]
+      saveDonations(updated)
+      return updated
+    })
+  }
+
+  function removeDonation(id: string) {
+    setDonations((prev) => {
+      const updated = prev.filter((d) => d.id !== id)
+      saveDonations(updated)
+      return updated
+    })
+  }
+
+  function downloadCertificate(d: DonationRecord) {
+    const donorName = (() => {
+      const profile = user?.profile as { firstName?: string; lastName?: string; hospitalName?: string } | undefined
+      if (!profile) return 'Donor'
+      const full = `${profile.firstName ?? ''} ${profile.lastName ?? ''}`.trim()
+      return full || profile.hospitalName || 'Donor'
+    })()
+
+    const text = [
+      'Blood Donation Certificate',
+      '',
+      `Donor: ${donorName}`,
+      `Date: ${d.date}`,
+      `Location: ${d.location}`,
+      `Units: ${d.units}`,
+      `Reference: ${d.id}`,
+    ].join('\n')
+
+    const blob = new Blob([text], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `donation_certificate_${d.date}_${d.id.slice(0, 8)}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -128,7 +282,7 @@ export default function DonorHome() {
               </div>
               <div className="text-right">
                 <div className="text-3xl mb-2">🏆</div>
-                <p className="text-sm text-gray-300">Level 5 Donor</p>
+                <p className="text-sm text-gray-300">Level {Math.max(1, Math.min(10, Math.floor(totalDonations / 2) + 1))} Donor</p>
               </div>
             </div>
             <div className="mt-6 pt-6 border-t border-white border-opacity-20">
@@ -142,7 +296,9 @@ export default function DonorHome() {
                   <div className="text-sm text-gray-300">Lives Touched</div>
                 </div>
                 <div>
-                  <div className="text-2xl font-bold">45d</div>
+                  <div className="text-2xl font-bold">
+                    {nextEligible ? `${Math.max(0, daysBetween(todayIso(), nextEligible))}d` : '—'}
+                  </div>
                   <div className="text-sm text-gray-300">Next Eligible</div>
                 </div>
               </div>
@@ -154,8 +310,8 @@ export default function DonorHome() {
             {[
               { icon: Heart, label: 'Lives Saved', value: livesTouched, color: 'text-vital-crimson' },
               { icon: TrendingUp, label: 'Impact Score', value: creditScore, color: 'text-ai-cyan' },
-              { icon: Award, label: 'Achievements', value: mockAchievements.filter(a => a.unlocked).length, color: 'text-plasma-gold' },
-              { icon: Calendar, label: 'Next Donation', value: nextEligible.split('-')[2], color: 'text-oxygen-green' },
+              { icon: Award, label: 'Achievements', value: achievements.filter(a => a.unlocked).length, color: 'text-plasma-gold' },
+              { icon: Calendar, label: 'Next Donation', value: nextEligible ? nextEligible.split('-')[2] : '—', color: 'text-oxygen-green' },
             ].map((stat, index) => (
               <motion.div
                 key={index}
@@ -227,7 +383,15 @@ export default function DonorHome() {
                           />
                         </div>
                       </div>
-                      <Button size="sm" className="ml-4">
+                      <Button
+                        size="sm"
+                        className="ml-4"
+                        onClick={() => {
+                          const el = document.getElementById('donor-upcoming-camps')
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                          toast.success('Pick a camp and register a slot')
+                        }}
+                      >
                         Book Now
                       </Button>
                     </div>
@@ -242,7 +406,7 @@ export default function DonorHome() {
                 Achievements & Badges
               </h2>
               <div className="grid grid-cols-2 gap-4">
-                {mockAchievements.map((achievement, index) => (
+                {achievements.map((achievement, index) => (
                   <motion.div
                     key={index}
                     initial={{ opacity: 0, scale: 0.9 }}
@@ -273,7 +437,8 @@ export default function DonorHome() {
           </div>
 
           {/* Upcoming Blood Camps */}
-          <Card className="mb-8">
+          <div id="donor-upcoming-camps">
+            <Card className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="font-heading text-2xl font-semibold text-medical-navy">
@@ -287,6 +452,7 @@ export default function DonorHome() {
             <div className="space-y-4">
               {upcomingCamps.map((camp, index) => {
                 const registered = registeredSet.has(camp.id)
+                const donated = donationByCampId.has(camp.id)
                 return (
                   <motion.div
                     key={camp.id}
@@ -328,26 +494,132 @@ export default function DonorHome() {
                           {registered ? 'Registered' : 'Register'}
                         </Button>
                         {registered ? <span className="text-xs text-oxygen-green">Slot reserved</span> : null}
+
+                        {registered ? (
+                          <Button
+                            size="sm"
+                            variant={donated ? 'outline' : 'primary'}
+                            onClick={() => {
+                              if (donated) {
+                                const existing = donationByCampId.get(camp.id)
+                                if (existing) {
+                                  removeDonation(existing.id)
+                                  toast.success('Donation removed')
+                                }
+                                return
+                              }
+                              addDonation({
+                                date: camp.date,
+                                location: camp.name,
+                                units: 1,
+                                source: 'camp',
+                                campId: camp.id,
+                              })
+                              toast.success('Donation recorded')
+                            }}
+                          >
+                            {donated ? 'Donated' : 'Mark Donated'}
+                          </Button>
+                        ) : null}
                       </div>
                     </div>
                   </motion.div>
                 )
               })}
             </div>
-          </Card>
+            </Card>
+          </div>
 
           {/* Donation History */}
           <Card>
             <h2 className="font-heading text-2xl font-semibold text-medical-navy mb-4">
               Donation History
             </h2>
+
+            <div className="p-4 border border-gray-200 rounded-lg mb-4">
+              <p className="font-semibold text-medical-navy mb-3">Log a Donation</p>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={manualDate}
+                    onChange={(e) => setManualDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                  <input
+                    type="text"
+                    value={manualLocation}
+                    onChange={(e) => setManualLocation(e.target.value)}
+                    placeholder="e.g. City Blood Bank"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Units</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={3}
+                    value={manualUnits}
+                    onChange={(e) => setManualUnits(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-vital-crimson outline-none"
+                  />
+                </div>
+              </div>
+              <div className="mt-3">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const date = manualDate.trim()
+                    const location = manualLocation.trim()
+                    const units = Number.isFinite(manualUnits) ? manualUnits : 1
+
+                    if (!date) {
+                      toast.error('Please choose a date')
+                      return
+                    }
+                    if (!location) {
+                      toast.error('Please enter a location')
+                      return
+                    }
+                    if (!units || units < 1) {
+                      toast.error('Units must be at least 1')
+                      return
+                    }
+
+                    addDonation({
+                      date,
+                      location,
+                      units,
+                      source: 'manual',
+                    })
+                    setManualLocation('')
+                    setManualUnits(1)
+                    toast.success('Donation logged')
+                  }}
+                >
+                  Add Donation
+                </Button>
+              </div>
+            </div>
+
             <div className="space-y-4">
-              {mockDonations.map((donation, index) => (
+              {sortedDonations.length === 0 ? (
+                <div className="p-4 border border-gray-200 rounded-lg text-sm text-gray-600">
+                  No donations logged yet. Use “Log a Donation” above or “Mark Donated” on a registered camp.
+                </div>
+              ) : null}
+
+              {sortedDonations.map((donation) => (
                 <motion.div
-                  key={index}
+                  key={donation.id}
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.1 }}
+                  transition={{ delay: 0.03 }}
                   className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   <div className="h-12 w-12 rounded-full bg-vital-crimson bg-opacity-10 flex items-center justify-center">
@@ -358,10 +630,26 @@ export default function DonorHome() {
                     <p className="text-sm text-gray-600">{donation.date}</p>
                   </div>
                   <div className="text-right">
-                    <p className="font-semibold text-medical-navy">{donation.units} unit</p>
-                    <Button size="sm" variant="ghost" className="mt-2">
-                      Download Certificate
-                    </Button>
+                    <p className="font-semibold text-medical-navy">{donation.units} unit{donation.units === 1 ? '' : 's'}</p>
+                    <div className="flex items-center justify-end gap-2 mt-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => downloadCertificate(donation)}
+                      >
+                        Download Certificate
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          removeDonation(donation.id)
+                          toast.success('Donation removed')
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
                   </div>
                 </motion.div>
               ))}

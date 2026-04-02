@@ -1,5 +1,5 @@
-import type { User, UserRole, BloodType } from '../types'
-import { apiGetAuth, apiPost } from '../utils/apiClient'
+import type { BloodType, User, UserRole } from '../types'
+import { apiDeleteAuth, apiGetAuth, apiPatchAuth, apiPost } from '../utils/apiClient'
 
 export interface AuthResponse {
   token: string
@@ -36,4 +36,39 @@ export async function loginUser(payload: {
 
 export async function getMe(token: string): Promise<User> {
   return await apiGetAuth<User>('/api/v1/auth/me', token)
+}
+
+export async function updateMyProfile(payload: {
+  token: string
+  displayName?: string
+  phone?: string
+  notifications?: Record<string, unknown>
+  animationSpeed?: 'Normal' | 'Fast' | 'Reduced Motion'
+  signal?: AbortSignal
+}): Promise<User> {
+  return await apiPatchAuth<User>(
+    '/api/v1/auth/me',
+    {
+      display_name: payload.displayName,
+      phone: payload.phone,
+      notifications: payload.notifications,
+      animation_speed: payload.animationSpeed,
+    },
+    payload.token,
+    { signal: payload.signal },
+  )
+}
+
+export async function exportMyData(payload: {
+  token: string
+  signal?: AbortSignal
+}): Promise<unknown> {
+  return await apiGetAuth<unknown>('/api/v1/auth/export', payload.token, { signal: payload.signal })
+}
+
+export async function deleteMyAccount(payload: {
+  token: string
+  signal?: AbortSignal
+}): Promise<{ status: string } | void> {
+  return await apiDeleteAuth<{ status: string }>('/api/v1/auth/me', payload.token, { signal: payload.signal })
 }

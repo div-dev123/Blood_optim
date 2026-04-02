@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..db import Base, engine, get_db
 from ..models import UserModel
-from ..schemas import AuthLoginRequest, AuthRegisterRequest, AuthResponse, AuthUser
+from ..schemas import AuthLoginRequest, AuthRegisterRequest, AuthResponse, AuthUser, AuthUpdateProfileRequest
 from ..security import create_access_token, hash_password, verify_password, decode_token
 
 
@@ -180,6 +180,157 @@ def me(
         raise HTTPException(status_code=401, detail="User not found")
 
     return _to_auth_user(user)
+
+
+@router.patch("/me", response_model=AuthUser)
+def update_me(
+    payload: AuthUpdateProfileRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        decoded = decode_token(token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = str(decoded.get("sub") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = db.get(UserModel, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    profile = user.get_profile()
+    if payload.display_name is not None:
+        name = payload.display_name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="display_name cannot be empty")
+        if user.role == "HOSPITAL":
+            profile["hospitalName"] = name
+        else:
+            first, last = _split_name(name)
+            profile["firstName"] = first
+            profile["lastName"] = last
+
+    if payload.phone is not None:
+        phone = payload.phone.strip()
+        if not phone:
+            raise HTTPException(status_code=400, detail="phone cannot be empty")
+        profile["phone"] = phone
+
+    if payload.notifications is not None and isinstance(payload.notifications, dict):
+        profile["notificationPreferences"] = payload.notifications
+
+    if payload.animation_speed is not None:
+        profile["animationSpeed"] = payload.animation_speed
+
+    user.set_profile(profile)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return _to_auth_user(user)
+
+
+@router.get("/export")
+def export_data(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        decoded = decode_token(token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = str(decoded.get("sub") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = db.get(UserModel, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    payload: dict = {
+        "user": _to_auth_user(user).model_dump(),
+    }
+
+    if user.role == "HOSPITAL":
+        from ..models import BloodUnitModel, RedistributionRequestModel
+
+        hospital_id = str(user.get_profile().get("hospitalId") or "")
+        if hospital_id:
+            units = db.scalars(select(BloodUnitModel).where(BloodUnitModel.hospital_id == hospital_id)).all()
+            payload["inventoryUnits"] = [
+                {
+                    "id": u.id,
+                    "hospital_id": u.hospital_id,
+                    "blood_type": u.blood_type,
+                    "collection_date": u.collection_date,
+                    "expiry_date": u.expiry_date,
+                    "status": u.status,
+                    "location": u.location,
+                    "match_score": u.match_score,
+                }
+                for u in units
+            ]
+
+            reqs = db.scalars(
+                select(RedistributionRequestModel).where(
+                    (RedistributionRequestModel.from_hospital_id == hospital_id)
+                    | (RedistributionRequestModel.to_hospital_id == hospital_id)
+                )
+            ).all()
+            payload["redistributionRequests"] = [
+                {
+                    "id": r.id,
+                    "from_hospital_id": r.from_hospital_id,
+                    "to_hospital_id": r.to_hospital_id,
+                    "blood_types": r.get_blood_types(),
+                    "units": r.units,
+                    "status": r.status,
+                    "urgency": r.urgency,
+                    "eta": r.eta,
+                    "created_at": r.created_at.isoformat(),
+                }
+                for r in reqs
+            ]
+
+    return payload
+
+
+@router.delete("/me")
+def delete_me(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        decoded = decode_token(token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = str(decoded.get("sub") or "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = db.get(UserModel, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    db.delete(user)
+    db.commit()
+    return {"status": "deleted"}
 
 
 def seed_demo_users(db: Session) -> None:
